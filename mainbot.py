@@ -2,9 +2,10 @@ import discord
 import json
 import os
 import datetime
-import openai
 import asyncio
 import logging
+import openai
+from openai import AsyncOpenAI  # Import the new OpenAI async client
 from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
@@ -18,11 +19,12 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI client
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Set up bot
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True  # Enable message content intent
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # JSON File Path
@@ -49,12 +51,12 @@ async def parse_time_with_gpt(time_str):
     Now process: {time_str}
     """
 
-    response = await openai.ChatCompletion.acreate(
+    response = await openai_client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[{"role": "system", "content": prompt}]
     )
     
-    formatted_time = response["choices"][0]["message"]["content"].strip()
+    formatted_time = response.choices[0].message.content.strip()
     return formatted_time if formatted_time != "ERROR" else None
 
 def is_tool_available(tool_name, requested_time):
@@ -99,11 +101,11 @@ async def signout(interaction: discord.Interaction, time: str):
         await interaction.response.send_message(f"{tool} signed out successfully at {formatted_time}!")
     else:
         prompt = f"The {tool} is not available at {formatted_time}. Suggest an alternative time."
-        response = await openai.ChatCompletion.acreate(
+        response = await openai_client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[{"role": "system", "content": prompt}]
         )
-        chat_response = response["choices"][0]["message"]["content"]
+        chat_response = response.choices[0].message.content
         await interaction.response.send_message(f"{tool} is already reserved at {formatted_time}. Suggested time: {chat_response}")
 
 @bot.tree.command(name="return", description="Return a tool")
@@ -138,12 +140,10 @@ async def reservations(interaction: discord.Interaction, tool: str = None):
 @bot.event
 async def on_ready():
     """Event handler for when the bot is ready."""
+    if not clean_expired_signouts.is_running():
+        clean_expired_signouts.start()  # Start the task loop safely
     await bot.tree.sync()
-    clean_expired_signouts.start()
     print(f"Logged in as {bot.user}")
-
-# Start background task
-clean_expired_signouts.start()
 
 # Run bot
 bot.run(TOKEN)
