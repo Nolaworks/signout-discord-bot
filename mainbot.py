@@ -66,7 +66,7 @@ async def parse_time_with_gpt(time_str):
     """
 
     response = await openai_client.chat.completions.create(
-        model="gpt-4-turbo",
+        model="gpt-4o-mini",
         messages=[{"role": "system", "content": prompt}]
     )
 
@@ -135,7 +135,7 @@ async def signout(interaction: discord.Interaction, time: str):
     else:
         prompt = f"The {tool} is not available at {formatted_time}. Suggest an alternative time."
         response = await openai_client.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-4o-mini",
             messages=[{"role": "system", "content": prompt}]
         )
         chat_response = response.choices[0].message.content.strip()
