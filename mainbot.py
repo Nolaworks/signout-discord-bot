@@ -41,7 +41,7 @@ def load_tools():
                     return data
         except json.JSONDecodeError:
             logging.error("Error decoding JSON. Resetting tools.json.")
-    
+
     return {"tools": {}}  # Ensure it always returns a valid dictionary
 
 def save_tools(data):
@@ -49,6 +49,7 @@ def save_tools(data):
     with open(TOOLS_FILE, "w") as f:
         json.dump(data, f, indent=4)
     logging.info(f"Saved tools.json: {json.dumps(data, indent=2)}")
+
 
 @tasks.loop(minutes=1)
 async def clean_expired_signouts():
@@ -168,15 +169,51 @@ async def signout(interaction: discord.Interaction, time: str):
         await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
         return
 
-    # Check for duplicate reservations
-    for reservation in data["tools"].get(tool, []):
-        if reservation["user"] == interaction.user.name and reservation["time"] == formatted_time:
-            await interaction.followup.send("You have already reserved this tool for the same time.", ephemeral=True)
+    # Check if the tool exists
+    if tool not in data["tools"]:
+        await interaction.followup.send(f"Tool '{tool}' does not exist.", ephemeral=True)
+        return
+
+    # Get the max allowed time for this tool (default 12 hours if not set)
+    max_time_hours = data["tools"][tool].get("max_time_hours", 12)
+
+    # Parse start and end times
+    if " to " in formatted_time:
+        start_time_str, end_time_str = formatted_time.split(" to ")
+        start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
+        end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
+    else:
+        start_time = datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
+        end_time = start_time  # No explicit end time, assume single-time reservation
+
+    # Check if reservation exceeds max allowed time for this tool
+    max_duration = datetime.timedelta(hours=max_time_hours)
+    if (end_time - start_time) > max_duration:
+        await interaction.followup.send(f"Sign-out time exceeds the max allowed for **{tool}** ({max_time_hours} hours).", ephemeral=True)
+        return
+
+    # Check for duplicate or conflicting reservations
+    for reservation in data["tools"][tool].get("reservations", []):
+        existing_start, existing_end = None, None
+
+        if " to " in reservation["time"]:
+            existing_start_str, existing_end_str = reservation["time"].split(" to ")
+            existing_start = datetime.datetime.strptime(existing_start_str, "%m-%d-%Y %H:%M")
+            existing_end = datetime.datetime.strptime(existing_end_str, "%m-%d-%Y %H:%M")
+        else:
+            existing_start = datetime.datetime.strptime(reservation["time"], "%m-%d-%Y %H:%M")
+            existing_end = existing_start  # Assume single-time reservation
+
+        # Check for time conflicts
+        if not (end_time <= existing_start or start_time >= existing_end):
+            await interaction.followup.send(f"Time conflict detected with another reservation: **{reservation['user']}** at **{reservation['time']}**.", ephemeral=True)
             return
-    
-    data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
+
+    # If no conflicts, add reservation
+    data["tools"][tool].setdefault("reservations", []).append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
     await interaction.followup.send(f"{tool} signed out for {formatted_time} by {interaction.user.name}!")
+
 
 @bot.event
 async def on_ready():
