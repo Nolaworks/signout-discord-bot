@@ -139,6 +139,7 @@ async def reservations(interaction: discord.Interaction, tool: str = None):
 async def on_ready():
     """Event handler for when the bot is ready."""
     await bot.tree.sync()
+    clean_expired_signouts.start()
     print(f"Logged in as {bot.user}")
 
 # Start background task
