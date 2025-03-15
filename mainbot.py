@@ -111,6 +111,37 @@ async def parse_time_with_gpt(time_str):
 
     return None
 
+def is_tool_available(tool_name, requested_time):
+    """Checks if a tool is available at a requested time or within a time range."""
+    data = load_tools()
+
+    if "to" in requested_time:
+        start_time, end_time = requested_time.split(" to ")
+        start_dt = datetime.datetime.strptime(start_time, "%m-%d-%Y %H:%M")
+        end_dt = datetime.datetime.strptime(f"{start_time.split()[0]} {end_time}", "%m-%d-%Y %H:%M")
+    else:
+        start_dt = end_dt = datetime.datetime.strptime(requested_time, "%m-%d-%Y %H:%M")
+
+    for entry in data["tools"].get(tool_name, []):
+        entry_time = entry["time"]
+
+        if "to" in entry_time:
+            existing_start, existing_end = entry_time.split(" to ")
+            existing_start_dt = datetime.datetime.strptime(existing_start, "%m-%d-%Y %H:%M")
+            existing_end_dt = datetime.datetime.strptime(f"{existing_start.split()[0]} {existing_end}", "%m-%d-%Y %H:%M")
+
+            if (start_dt < existing_end_dt and end_dt > existing_start_dt):
+                logging.info(f"Conflict detected: {requested_time} overlaps with {entry_time}")
+                return False
+
+        else:
+            existing_dt = datetime.datetime.strptime(entry_time, "%m-%d-%Y %H:%M")
+            if start_dt <= existing_dt <= end_dt:
+                logging.info(f"Conflict detected: {requested_time} overlaps with single reservation {entry_time}")
+                return False
+
+    return True
+
 @bot.tree.command(name="signout", description="Sign out a tool at a specific time")
 async def signout(interaction: discord.Interaction, time: str):
     if interaction.channel.name.startswith("signout-"):
@@ -128,37 +159,12 @@ async def signout(interaction: discord.Interaction, time: str):
         await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
         return
 
-    data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
-    save_tools(data)
-    await interaction.followup.send(f"{tool} signed out for {formatted_time}!")
-
-@bot.tree.command(name="return", description="Return a tool")
-async def return_tool(interaction: discord.Interaction):
-    if interaction.channel.name.startswith("signout-"):
-        tool = interaction.channel.name.replace("signout-", "")
-    else:
-        await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
-        return
-
-    data = load_tools()
-    if tool in data["tools"] and data["tools"][tool]:
-        data["tools"][tool].pop(0)
+    if is_tool_available(tool, formatted_time):
+        data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
         save_tools(data)
-        await interaction.response.send_message(f"{tool} has been returned.")
+        await interaction.followup.send(f"{tool} signed out for {formatted_time}!")
     else:
-        await interaction.response.send_message(f"{tool} is not currently signed out.", ephemeral=True)
-
-@bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
-async def reservations(interaction: discord.Interaction):
-    if interaction.channel.name.startswith("signout-"):
-        tool = interaction.channel.name.replace("signout-", "")
-    else:
-        await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
-        return
-
-    data = load_tools()
-    reservations_list = "\n".join([f"- {r['user']} at {r['time']}" for r in data["tools"].get(tool, [])])
-    await interaction.response.send_message(f"Reservations for {tool}:\n{reservations_list or 'None'}")
+        await interaction.followup.send(f"{tool} is already reserved for {formatted_time}. Please choose another time.")
 
 @bot.event
 async def on_ready():
