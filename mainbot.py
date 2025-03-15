@@ -50,6 +50,20 @@ def save_tools(data):
         json.dump(data, f, indent=4)
     logging.info(f"Saved tools.json: {json.dumps(data, indent=2)}")
 
+@tasks.loop(minutes=1)
+async def clean_expired_signouts():
+    """Removes expired tool sign-outs automatically."""
+    data = load_tools()
+    now = datetime.datetime.now()
+
+    for tool, reservations in data["tools"].items():
+        data["tools"][tool] = [
+            r for r in reservations if datetime.datetime.strptime(r["time"].split(" ")[0], "%m-%d-%Y") > now
+        ]
+
+    save_tools(data)
+    logging.info("Expired signouts cleaned.")
+
 async def parse_time_with_gpt(time_str):
     """Uses OpenAI to parse a user-provided time string into MM-DD-YYYY HH:MM or a range MM-DD-YYYY HH:MM to HH:MM."""
     central_tz = pytz.timezone("America/Chicago")
@@ -74,11 +88,8 @@ async def parse_time_with_gpt(time_str):
     )
 
     formatted_time = response.choices[0].message.content.strip()
-
-    # Debugging: Log OpenAI response
     logging.info(f"OpenAI raw response: {formatted_time}")
 
-    # Validate single timestamp
     if "to" not in formatted_time:
         try:
             datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
@@ -87,12 +98,11 @@ async def parse_time_with_gpt(time_str):
             logging.error(f"Malformed time from OpenAI: {formatted_time}")
             return None
 
-    # Validate time range (MM-DD-YYYY HH:MM to HH:MM)
     parts = formatted_time.split(" to ")
     if len(parts) == 2:
         try:
             start_time = datetime.datetime.strptime(parts[0], "%m-%d-%Y %H:%M")
-            end_time_str = f"{parts[0].split()[0]} {parts[1]}"  # Use same date for end time
+            end_time_str = f"{parts[0].split()[0]} {parts[1]}"
             end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
             return f"{start_time.strftime('%m-%d-%Y %H:%M')} to {end_time.strftime('%H:%M')}"
         except ValueError:
@@ -100,47 +110,6 @@ async def parse_time_with_gpt(time_str):
             return None
 
     return None
-
-def is_tool_available(tool_name, requested_time):
-    """Checks if a tool is available at a requested time or within a time range."""
-    data = load_tools()
-
-    if "to" in requested_time:
-        start_time, end_time = requested_time.split(" to ")
-        start_dt = datetime.datetime.strptime(start_time, "%m-%d-%Y %H:%M")
-        end_dt = datetime.datetime.strptime(f"{start_time.split()[0]} {end_time}", "%m-%d-%Y %H:%M")
-
-        for entry in data["tools"].get(tool_name, []):
-            entry_time = entry["time"]
-            if "to" in entry_time:
-                existing_start, existing_end = entry_time.split(" to ")
-                existing_start_dt = datetime.datetime.strptime(existing_start, "%m-%d-%Y %H:%M")
-                existing_end_dt = datetime.datetime.strptime(f"{existing_start.split()[0]} {existing_end}", "%m-%d-%Y %H:%M")
-                
-                if (start_dt < existing_end_dt and end_dt > existing_start_dt):
-                    return False
-            else:
-                existing_dt = datetime.datetime.strptime(entry_time, "%m-%d-%Y %H:%M")
-                if start_dt <= existing_dt <= end_dt:
-                    return False
-    else:
-        requested_dt = datetime.datetime.strptime(requested_time, "%m-%d-%Y %H:%M")
-
-        for entry in data["tools"].get(tool_name, []):
-            entry_time = entry["time"]
-            if "to" in entry_time:
-                existing_start, existing_end = entry_time.split(" to ")
-                existing_start_dt = datetime.datetime.strptime(existing_start, "%m-%d-%Y %H:%M")
-                existing_end_dt = datetime.datetime.strptime(f"{existing_start.split()[0]} {existing_end}", "%m-%d-%Y %H:%M")
-
-                if existing_start_dt <= requested_dt <= existing_end_dt:
-                    return False
-            else:
-                existing_dt = datetime.datetime.strptime(entry_time, "%m-%d-%Y %H:%M")
-                if existing_dt == requested_dt:
-                    return False
-
-    return True
 
 @bot.tree.command(name="signout", description="Sign out a tool at a specific time")
 async def signout(interaction: discord.Interaction, time: str):
@@ -159,19 +128,48 @@ async def signout(interaction: discord.Interaction, time: str):
         await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
         return
 
-    if is_tool_available(tool, formatted_time):
-        data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
-        save_tools(data)
-        await interaction.followup.send(f"{tool} signed out for {formatted_time}!")
+    data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
+    save_tools(data)
+    await interaction.followup.send(f"{tool} signed out for {formatted_time}!")
+
+@bot.tree.command(name="return", description="Return a tool")
+async def return_tool(interaction: discord.Interaction):
+    if interaction.channel.name.startswith("signout-"):
+        tool = interaction.channel.name.replace("signout-", "")
     else:
-        await interaction.followup.send(f"{tool} is already reserved for {formatted_time}.")
+        await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
+        return
+
+    data = load_tools()
+    if tool in data["tools"] and data["tools"][tool]:
+        data["tools"][tool].pop(0)
+        save_tools(data)
+        await interaction.response.send_message(f"{tool} has been returned.")
+    else:
+        await interaction.response.send_message(f"{tool} is not currently signed out.", ephemeral=True)
+
+@bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
+async def reservations(interaction: discord.Interaction):
+    if interaction.channel.name.startswith("signout-"):
+        tool = interaction.channel.name.replace("signout-", "")
+    else:
+        await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
+        return
+
+    data = load_tools()
+    reservations_list = "\n".join([f"- {r['user']} at {r['time']}" for r in data["tools"].get(tool, [])])
+    await interaction.response.send_message(f"Reservations for {tool}:\n{reservations_list or 'None'}")
 
 @bot.event
 async def on_ready():
-    if not clean_expired_signouts.is_running():
-        clean_expired_signouts.start()
-    await bot.tree.sync()
-    print(f"Logged in as {bot.user}")
+    """Event handler for when the bot is ready."""
+    try:
+        if not clean_expired_signouts.is_running():
+            clean_expired_signouts.start()
+        await bot.tree.sync()
+        logging.info(f"Logged in as {bot.user}")
+    except NameError:
+        logging.error("clean_expired_signouts() is missing, skipping task loop.")
 
 # Run bot
 bot.run(TOKEN)
