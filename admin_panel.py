@@ -66,13 +66,20 @@ class AdminPanel(commands.Cog):
                     return
         await interaction.response.send_message(f"No matching reservation found.", ephemeral=True)
     
-    @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time allowed")
-    @app_commands.describe(hours="Max sign-out duration in hours")
-    async def set_max_time(self, interaction, hours: int):
-        settings = load_settings()
-        settings["max_signout_time"] = hours
-        save_settings(settings)
-        await interaction.response.send_message(f"Maximum sign-out time set to {hours} hours.")
+    @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
+    @app_commands.describe(tool="Tool name", hours="Max sign-out duration in hours")
+    async def set_max_time(self, interaction, tool: str, hours: int):
+        data = load_tools()
+        if tool in data["tools"]:
+            if not isinstance(data["tools"][tool], dict):  # Ensure tool data is in dict format
+                data["tools"][tool] = {"reservations": [], "max_time": hours}
+            else:
+                data["tools"][tool]["max_time"] = hours
+            save_tools(data)
+            await interaction.response.send_message(f"Maximum sign-out time for {tool} set to {hours} hours.")
+        else:
+            await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
+
     
     @app_commands.command(name="forcereturn", description="Admin: Force return a tool")
     @app_commands.describe(tool="Tool name")
