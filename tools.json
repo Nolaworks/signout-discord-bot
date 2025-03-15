@@ -1,11 +1,9 @@
 {
     "tools": {
-        "waterbottle": [
-            {
-                "user": "mmennelle",
-                "time": "03-20-2025 14:00 to 15:00"
-            }
-        ],
+        "waterbottle": {
+            "reservations": [],
+            "max_time": 24
+        },
         "cnc": [
             {
                 "user": "mmennelle",
