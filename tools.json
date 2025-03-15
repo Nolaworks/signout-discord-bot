@@ -1,15 +1,30 @@
 {
     "tools": {
-        "wrench": [
+        "waterbottle": [
             {
                 "user": "mmennelle",
-                "time": "03-21-2025 15:00 to 17:00"
+                "time": "03-20-2025 14:00 to 15:00"
+            }
+        ],
+        "cnc": [
+            {
+                "user": "mmennelle",
+                "time": "03-20-2025 01:00 to 02:00"
             },
             {
                 "user": "mmennelle",
-                "time": "03-21-2025 15:00 to 17:00"
+                "time": "03-18-2025 03:00 to 16:00"
+            },
+            {
+                "user": "mmennelle",
+                "time": "03-16-2025 00:02"
             }
         ],
-        "cnc": []
+        "drill": [
+            {
+                "user": "mmennelle",
+                "time": "03-15-2025 12:03 to 15:00"
+            }
+        ]
     }
 }
