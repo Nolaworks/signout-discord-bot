@@ -168,15 +168,43 @@ async def signout(interaction: discord.Interaction, time: str):
         await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
         return
 
+    # Ensure the tool exists
+    if tool not in data["tools"]:
+        await interaction.followup.send(f"The tool '{tool}' does not exist.", ephemeral=True)
+        return
+    
+    # Ensure the tool is properly structured
+    if not isinstance(data["tools"][tool], dict):
+        data["tools"][tool] = {"reservations": [], "max_time": 24}  # Default max time
+
+    # Retrieve max allowed signout time for this tool
+    max_hours = data["tools"][tool].get("max_time", 24)
+
+    # Parse the reservation time and check duration
+    if "to" in formatted_time:
+        start_time_str, end_time_str = formatted_time.split(" to ")
+        start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
+        end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
+
+        duration = (end_time - start_time).total_seconds() / 3600  # Convert to hours
+        if duration > max_hours:
+            await interaction.followup.send(f"Cannot sign out {tool} for more than {max_hours} hours.", ephemeral=True)
+            return
+    else:
+        # If it's a single time, assume a duration of 1 hour (or could adjust logic)
+        pass
+
     # Check for duplicate reservations
-    for reservation in data["tools"].get(tool, []):
+    for reservation in data["tools"][tool]["reservations"]:
         if reservation["user"] == interaction.user.name and reservation["time"] == formatted_time:
             await interaction.followup.send("You have already reserved this tool for the same time.", ephemeral=True)
             return
-    
-    data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
+
+    # Store the reservation
+    data["tools"][tool]["reservations"].append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
     await interaction.followup.send(f"{tool} signed out for {formatted_time} by {interaction.user.name}!")
+
 
 @bot.event
 async def on_ready():
