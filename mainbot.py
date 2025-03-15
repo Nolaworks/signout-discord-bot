@@ -5,8 +5,8 @@ import datetime
 import asyncio
 import logging
 import openai
-import pytz  # Import timezone handling
-from openai import AsyncOpenAI  # Import the new OpenAI async client
+import pytz
+from openai import AsyncOpenAI
 from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
@@ -25,41 +25,40 @@ openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Set up bot
 intents = discord.Intents.default()
-intents.message_content = True  # Enable message content intent
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # JSON File Path
 TOOLS_FILE = "tools.json"
 
 def load_tools():
-    """Loads tool reservations from JSON."""
+    """Loads tool reservations from JSON, or initializes an empty structure."""
     if os.path.exists(TOOLS_FILE):
-        with open(TOOLS_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(TOOLS_FILE, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logging.error("Error decoding JSON. Resetting tools.json.")
     return {"tools": {}}
 
 def save_tools(data):
     """Saves tool reservations to JSON."""
     with open(TOOLS_FILE, "w") as f:
         json.dump(data, f, indent=4)
+    logging.info(f"Saved tools.json: {data}")
 
 async def parse_time_with_gpt(time_str):
-    """Uses OpenAI to parse a user-provided time string into the format MM-DD-YYYY HH:MM or HH:MM-HH:MM, with awareness of U.S. Central Time."""
-
-    # Get current date and time in U.S. Central Time
+    """Uses OpenAI to parse a user-provided time string into MM-DD-YYYY HH:MM."""
     central_tz = pytz.timezone("America/Chicago")
     current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
 
     prompt = f"""
-    Convert the following time expression into a standard format (MM-DD-YYYY HH:MM or HH:MM-HH:MM).
-    If it's a time range, return HH:MM-HH:MM. 
-    If it's a single time, return MM-DD-YYYY HH:MM.
-    JUST RETURN THE FORMATTED STRING AND NOTHING ELSE
-    
-    Use the current date and time: {current_time} (U.S. Central Time) as a reference.
-    If the expression is invalid or ambiguous, use {current_time} to fill in missing parts. 
-    If this doesn't help, return 'ERROR'.
-    
+    Convert the following time expression into a standard format (MM-DD-YYYY HH:MM).
+    Use the current U.S. Central Time: {current_time} for reference.
+    If it's ambiguous, use {current_time} to fill in missing parts.
+    If completely invalid, return 'ERROR'.
+     JUST RETURN THE FORMATTED STRING AND NOTHING ELSE
+
     Now process: {time_str}
     """
 
@@ -67,10 +66,9 @@ async def parse_time_with_gpt(time_str):
         model="gpt-4-turbo",
         messages=[{"role": "system", "content": prompt}]
     )
-    
+
     formatted_time = response.choices[0].message.content.strip()
 
-    # Check if OpenAI returned an invalid response
     if "ERROR" in formatted_time or len(formatted_time) > 50:
         logging.warning(f"OpenAI returned an invalid response: {formatted_time}")
         return None
@@ -80,17 +78,14 @@ async def parse_time_with_gpt(time_str):
 def is_tool_available(tool_name, requested_time):
     """Checks if a tool is available at a requested time using MM-DD-YYYY HH:MM format."""
     data = load_tools()
-    try:
-        requested_time = datetime.datetime.strptime(requested_time, "%m-%d-%Y %H:%M")
-    except ValueError:
-        logging.error(f"Invalid time format received: {requested_time}")
-        return False
+    requested_time_dt = datetime.datetime.strptime(requested_time, "%m-%d-%Y %H:%M")
 
     if tool_name in data["tools"]:
         for entry in data["tools"][tool_name]:
-            if datetime.datetime.strptime(entry["time"], "%m-%d-%Y %H:%M") == requested_time:
-                return False
-    return True
+            entry_time_dt = datetime.datetime.strptime(entry["time"], "%m-%d-%Y %H:%M")
+            if entry_time_dt == requested_time_dt:
+                return False  # Conflict found
+    return True  # No conflicts
 
 @tasks.loop(minutes=1)
 async def clean_expired_signouts():
@@ -108,9 +103,8 @@ async def clean_expired_signouts():
 @bot.tree.command(name="signout", description="Sign out a tool at a specific time")
 @app_commands.describe(time="Any format (e.g., 'tomorrow 3pm', 'next Friday')")
 async def signout(interaction: discord.Interaction, time: str):
-    """Signs out a tool, automatically detecting tool names from channels like 'signout-[tool]'."""
+    """Signs out a tool, detecting tool names from channels like 'signout-[tool]'."""
     
-    # Extract tool name from the channel (if channel is named 'signout-[tool]')
     if interaction.channel.name.startswith("signout-"):
         tool = interaction.channel.name.replace("signout-", "")
     else:
@@ -119,13 +113,11 @@ async def signout(interaction: discord.Interaction, time: str):
         )
         return
 
-    # Defer response immediately to prevent interaction timeout
     await interaction.response.defer(thinking=True)
 
     data = load_tools()
     formatted_time = await parse_time_with_gpt(time)
 
-    # Check if OpenAI returned an invalid response
     if not formatted_time:
         await interaction.followup.send(
             "Sorry, I couldn't understand the time format. Try again with a clearer format (e.g., 'March 5 at 2PM').",
@@ -191,9 +183,10 @@ async def reservations(interaction: discord.Interaction):
 async def on_ready():
     """Event handler for when the bot is ready."""
     if not clean_expired_signouts.is_running():
-        clean_expired_signouts.start()  # Start the task loop safely
+        clean_expired_signouts.start()
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
 
 # Run bot
 bot.run(TOKEN)
+
