@@ -59,6 +59,7 @@ async def parse_time_with_gpt(time_str):
     DO NOT return any extra text, explanations, or timezone offsets
     Use the current date and time: {current_time} (U.S. Central Time) as a reference.
     If the expression is invalid or ambiguous, use {current_time} to fill in missing parts. 
+    use a colon between HH and MM like HH:MM even if a hyphen is used.
     If this doesn't help, return 'ERROR'.
     
     Now process: {time_str}
