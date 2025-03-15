@@ -97,8 +97,9 @@ async def parse_time_with_gpt(time_str):
 
     prompt = f"""
     Convert the following time expression into a standard format:
+    - consider all times as present to future. there will be no past times
     - If it's a single time, return (MM-DD-YYYY HH:MM).
-    - If it's a time range, return (MM-DD-YYYY HH:MM to HH:MM).
+    - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
     - DO NOT return any extra text, explanations, or timezone information.
 
     Use the current date and time: {current_time} (U.S. Central Time) as a reference.
@@ -116,26 +117,22 @@ async def parse_time_with_gpt(time_str):
     formatted_time = response.choices[0].message.content.strip()
     logging.info(f"OpenAI raw response: {formatted_time}")
 
-    if "to" not in formatted_time:
+    if "to" in formatted_time:
+        try:
+            start_time_str, end_time_str = formatted_time.split(" to ")
+            start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
+            end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
+            return f"{start_time.strftime('%m-%d-%Y %H:%M')} to {end_time.strftime('%m-%d-%Y %H:%M')}"
+        except ValueError:
+            logging.error(f"Malformed time range from OpenAI: {formatted_time}")
+        return None
+    else:
         try:
             datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
             return formatted_time
         except ValueError:
             logging.error(f"Malformed time from OpenAI: {formatted_time}")
-            return None
-
-    parts = formatted_time.split(" to ")
-    if len(parts) == 2:
-        try:
-            start_time = datetime.datetime.strptime(parts[0], "%m-%d-%Y %H:%M")
-            end_time_str = f"{parts[0].split()[0]} {parts[1]}"
-            end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
-            return f"{start_time.strftime('%m-%d-%Y %H:%M')} to {end_time.strftime('%H:%M')}"
-        except ValueError:
-            logging.error(f"Malformed time range from OpenAI: {formatted_time}")
-            return None
-
-    return None
+        return None
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
 async def reservations(interaction: discord.Interaction):
@@ -171,14 +168,22 @@ async def signout(interaction: discord.Interaction, time: str):
         await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
         return
 
+    # Check for duplicate reservations
+    for reservation in data["tools"].get(tool, []):
+        if reservation["user"] == interaction.user.name and reservation["time"] == formatted_time:
+            await interaction.followup.send("You have already reserved this tool for the same time.", ephemeral=True)
+            return
+    
     data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
-    await interaction.followup.send(f"{tool} signed out for {formatted_time}!")
+    await interaction.followup.send(f"{tool} signed out for {formatted_time} by {interaction.user.name}!")
 
 @bot.event
 async def on_ready():
     """Event handler for when the bot is ready."""
     try:
+         # Ensure the AdminPanel cog is added
+        await bot.add_cog(AdminPanel(bot))
         await bot.tree.sync()  # Force sync of all slash commands
         logging.info(f"Commands synced: {len(bot.tree.get_commands())} commands available.")
 
