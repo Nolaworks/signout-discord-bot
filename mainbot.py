@@ -53,12 +53,15 @@ async def parse_time_with_gpt(time_str):
     current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
 
     prompt = f"""
-    Convert the following time expression into a standard format (MM-DD-YYYY HH:MM).
-    Use the current U.S. Central Time: {current_time} for reference.
-    If it's ambiguous, use {current_time} to fill in missing parts.
-    If completely invalid, return 'ERROR'.
-     JUST RETURN THE FORMATTED STRING AND NOTHING ELSE
-
+    Convert the following time expression into a standard format (MM-DD-YYYY HH:MM or HH:MM-HH:MM).
+    If it's a time range, return HH:MM-HH:MM. 
+    If it's a single time, return MM-DD-YYYY HH:MM.
+    JUST RETURN THE FORMATTED STRING AND NOTHING ELSE
+    
+    Use the current date and time: {current_time} (U.S. Central Time) as a reference.
+    If the expression is invalid or ambiguous, use {current_time} to fill in missing parts. 
+    If this doesn't help, return 'ERROR'.
+    
     Now process: {time_str}
     """
 
