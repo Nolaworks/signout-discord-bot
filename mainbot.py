@@ -5,6 +5,7 @@ import datetime
 import asyncio
 import logging
 import openai
+import pytz  # Import timezone handling
 from openai import AsyncOpenAI  # Import the new OpenAI async client
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -43,22 +44,32 @@ def save_tools(data):
         json.dump(data, f, indent=4)
 
 async def parse_time_with_gpt(time_str):
-    """Uses OpenAI to parse a user-provided time string into the format MM-DD-YYYY HH:MM."""
+    """Uses OpenAI to parse a user-provided time string into the format MM-DD-YYYY HH:MM or HH:MM-HH:MM, with awareness of U.S. Central Time."""
+
+    # Get current date and time in U.S. Central Time
+    central_tz = pytz.timezone("America/Chicago")
+    current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
+
     prompt = f"""
     Convert the following time expression into a standard format (MM-DD-YYYY HH:MM or HH:MM-HH:MM).
-    If it's invalid or ambiguous, use the current date and time for U.S Central standard time to fill in. if this dosent help, return 'ERROR'.
+    If it's a time range, return HH:MM-HH:MM. 
+    If it's a single time, return MM-DD-YYYY HH:MM.
+    
+    Use the current date and time: {current_time} (U.S. Central Time) as a reference.
+    If the expression is invalid or ambiguous, use {current_time} to fill in missing parts. 
+    If this doesn't help, return 'ERROR'.
     
     Now process: {time_str}
     """
 
     response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4-turbo",
         messages=[{"role": "system", "content": prompt}]
     )
     
     formatted_time = response.choices[0].message.content.strip()
 
-    # Check if OpenAI returned an error or an excessively long response
+    # Check if OpenAI returned an invalid response
     if "ERROR" in formatted_time or len(formatted_time) > 50:
         logging.warning(f"OpenAI returned an invalid response: {formatted_time}")
         return None
@@ -128,7 +139,7 @@ async def signout(interaction: discord.Interaction, time: str):
     else:
         prompt = f"The {tool} is not available at {formatted_time}. Suggest an alternative time."
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4-turbo",
             messages=[{"role": "system", "content": prompt}]
         )
         chat_response = response.choices[0].message.content.strip()
