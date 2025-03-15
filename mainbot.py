@@ -43,10 +43,10 @@ def save_tools(data):
         json.dump(data, f, indent=4)
 
 async def parse_time_with_gpt(time_str):
-    """Uses OpenAI to parse a user-provided time string into a standard format."""
+    """Uses OpenAI to parse a user-provided time string into the format MM-DD-YYYY HH:MM."""
     prompt = f"""
-    Convert the following time expression into a standard format (YYYY-MM-DD HH:MM).
-    If it's invalid or ambiguous, return 'ERROR'.
+    Convert the following time expression into a standard format (MM-DD-YYYY HH:MM).
+    If it's invalid or ambiguous, use the current date and time for u.s Central standard time to fill in. if this dosent help, return 'ERROR'.
     
     Now process: {time_str}
     """
@@ -66,17 +66,17 @@ async def parse_time_with_gpt(time_str):
     return formatted_time
 
 def is_tool_available(tool_name, requested_time):
-    """Checks if a tool is available at a requested time."""
+    """Checks if a tool is available at a requested time using MM-DD-YYYY HH:MM format."""
     data = load_tools()
     try:
-        requested_time = datetime.datetime.strptime(requested_time, "%Y-%m-%d %H:%M")
+        requested_time = datetime.datetime.strptime(requested_time, "%m-%d-%Y %H:%M")
     except ValueError:
         logging.error(f"Invalid time format received: {requested_time}")
         return False
 
     if tool_name in data["tools"]:
         for entry in data["tools"][tool_name]:
-            if datetime.datetime.strptime(entry["time"], "%Y-%m-%d %H:%M") == requested_time:
+            if datetime.datetime.strptime(entry["time"], "%m-%d-%Y %H:%M") == requested_time:
                 return False
     return True
 
@@ -88,7 +88,7 @@ async def clean_expired_signouts():
 
     for tool, reservations in data["tools"].items():
         data["tools"][tool] = [
-            r for r in reservations if datetime.datetime.strptime(r["time"], "%Y-%m-%d %H:%M") > now
+            r for r in reservations if datetime.datetime.strptime(r["time"], "%m-%d-%Y %H:%M") > now
         ]
 
     save_tools(data)
@@ -107,13 +107,15 @@ async def signout(interaction: discord.Interaction, time: str):
         )
         return
 
-    data = load_tools()
+    # Defer response immediately to prevent interaction timeout
+    await interaction.response.defer(thinking=True)
 
+    data = load_tools()
     formatted_time = await parse_time_with_gpt(time)
 
     # Check if OpenAI returned an invalid response
     if not formatted_time:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Sorry, I couldn't understand the time format. Try again with a clearer format (e.g., 'March 5 at 2PM').",
             ephemeral=True
         )
@@ -122,7 +124,7 @@ async def signout(interaction: discord.Interaction, time: str):
     if is_tool_available(tool, formatted_time):
         data["tools"].setdefault(tool, []).append({"user": interaction.user.name, "time": formatted_time})
         save_tools(data)
-        await interaction.response.send_message(f"{tool} signed out successfully at {formatted_time}!")
+        await interaction.followup.send(f"{tool} signed out successfully at {formatted_time}!")
     else:
         prompt = f"The {tool} is not available at {formatted_time}. Suggest an alternative time."
         response = await openai_client.chat.completions.create(
@@ -131,7 +133,7 @@ async def signout(interaction: discord.Interaction, time: str):
         )
         chat_response = response.choices[0].message.content.strip()
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"{tool} is already reserved at {formatted_time}. Suggested time: {chat_response}"
         )
 
