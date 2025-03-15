@@ -56,8 +56,7 @@ async def parse_time_with_gpt(time_str):
     Convert the following time expression into a standard format (MM-DD-YYYY HH:MM or HH:MM-HH:MM).
     If it's a time range, return HH:MM-HH:MM. 
     If it's a single time, return MM-DD-YYYY HH:MM.
-    JUST RETURN THE FORMATTED STRING AND NOTHING ELSE
-    
+    DO NOT return any extra text, explanations, or timezone offsets
     Use the current date and time: {current_time} (U.S. Central Time) as a reference.
     If the expression is invalid or ambiguous, use {current_time} to fill in missing parts. 
     If this doesn't help, return 'ERROR'.
