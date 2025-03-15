@@ -54,15 +54,41 @@ def save_tools(data):
 async def clean_expired_signouts():
     """Removes expired tool sign-outs automatically."""
     data = load_tools()
-    now = datetime.datetime.now()
+    central_tz = pytz.timezone("America/Chicago")
+    now = datetime.datetime.now(central_tz)
 
     for tool, reservations in data["tools"].items():
-        data["tools"][tool] = [
-            r for r in reservations if datetime.datetime.strptime(r["time"].split(" ")[0], "%m-%d-%Y") > now
-        ]
+        valid_reservations = []
+        for r in reservations:
+            try:
+                # Check if it's a time range (e.g., "03-14-2025 14:00 to 15:00")
+                if " to " in r["time"]:
+                    start_time_str, end_time_str = r["time"].split(" to ")
+                    start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
+                    end_time = datetime.datetime.strptime(
+                        f"{start_time.strftime('%m-%d-%Y')} {end_time_str}",
+                        "%m-%d-%Y %H:%M"
+                    )
+                else:
+                    # Single reservation time
+                    start_time = datetime.datetime.strptime(r["time"], "%m-%d-%Y %H:%M")
+                    end_time = start_time  # No explicit end time, treat as single moment
+
+                # Convert to timezone-aware datetime
+                start_time = central_tz.localize(start_time)
+                end_time = central_tz.localize(end_time)
+
+                if end_time > now:
+                    valid_reservations.append(r)  # Keep only valid reservations
+
+            except ValueError:
+                logging.error(f"Malformed reservation time: {r['time']}")
+        
+        data["tools"][tool] = valid_reservations  # Update the list with valid ones
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")
+
 
 async def parse_time_with_gpt(time_str):
     """Uses OpenAI to parse a user-provided time string into MM-DD-YYYY HH:MM or a range MM-DD-YYYY HH:MM to HH:MM."""
