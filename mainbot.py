@@ -96,8 +96,17 @@ async def clean_expired_signouts():
 @bot.tree.command(name="signout", description="Sign out a tool at a specific time")
 @app_commands.describe(time="Any format (e.g., 'tomorrow 3pm', 'next Friday')")
 async def signout(interaction: discord.Interaction, time: str):
-    """Signs out a tool based on the channel name."""
-    tool = interaction.channel.name  # Use the channel name as the tool name
+    """Signs out a tool, automatically detecting tool names from channels like 'signout-[tool]'."""
+    
+    # Extract tool name from the channel (if channel is named 'signout-[tool]')
+    if interaction.channel.name.startswith("signout-"):
+        tool = interaction.channel.name.replace("signout-", "")
+    else:
+        await interaction.response.send_message(
+            "This command must be used in a channel named 'signout-[tool]'.", ephemeral=True
+        )
+        return
+
     data = load_tools()
 
     formatted_time = await parse_time_with_gpt(time)
@@ -129,7 +138,15 @@ async def signout(interaction: discord.Interaction, time: str):
 @bot.tree.command(name="return", description="Return a tool")
 async def return_tool(interaction: discord.Interaction):
     """Returns a tool based on the channel name."""
-    tool = interaction.channel.name  # Use the channel name as the tool name
+    
+    if interaction.channel.name.startswith("signout-"):
+        tool = interaction.channel.name.replace("signout-", "")
+    else:
+        await interaction.response.send_message(
+            "This command must be used in a channel named 'signout-[tool]'.", ephemeral=True
+        )
+        return
+
     data = load_tools()
 
     if tool in data["tools"] and data["tools"][tool]:
@@ -140,20 +157,21 @@ async def return_tool(interaction: discord.Interaction):
         await interaction.response.send_message(f"{tool} is not currently signed out.", ephemeral=True)
 
 @bot.tree.command(name="reservations", description="List reservations for all tools or a specific tool")
-@app_commands.describe(tool="(Optional) Tool name")
-async def reservations(interaction: discord.Interaction, tool: str = None):
-    """Lists reservations for all tools or a specific tool."""
-    data = load_tools()
+async def reservations(interaction: discord.Interaction):
+    """Lists reservations for the current tool (determined by the channel)."""
 
-    if tool:
-        reservations_list = "\n".join([f"- {r['user']} at {r['time']}" for r in data["tools"].get(tool, [])])
-        await interaction.response.send_message(f"Reservations for {tool}:\n{reservations_list or 'None'}")
+    if interaction.channel.name.startswith("signout-"):
+        tool = interaction.channel.name.replace("signout-", "")
     else:
-        all_reservations = [
-            f"**{t}:**\n" + "\n".join([f"- {r['user']} at {r['time']}" for r in res])
-            for t, res in data["tools"].items() if res
-        ]
-        await interaction.response.send_message(f"All Reservations:\n{chr(10).join(all_reservations) or 'No active reservations.'}")
+        await interaction.response.send_message(
+            "This command must be used in a channel named 'signout-[tool]'.", ephemeral=True
+        )
+        return
+
+    data = load_tools()
+    reservations_list = "\n".join([f"- {r['user']} at {r['time']}" for r in data["tools"].get(tool, [])])
+
+    await interaction.response.send_message(f"Reservations for {tool}:\n{reservations_list or 'None'}")
 
 @bot.event
 async def on_ready():
