@@ -180,7 +180,7 @@ async def signout(interaction: discord.Interaction, time: str):
 
         # Check if time ranges overlap
         if not (end_time <= existing_start or start_time >= existing_end):
-            await interaction.followup.send(f"Time conflict detected with another reservation: **{reservation['user']}** at **{reservation['time']}**.", ephemeral=True)
+            await interaction.followup.send(f"Uh-oh! The tool is already reserved by: **{reservation['user']}** at **{reservation['time']}**.", ephemeral=True)
             return
 
     # If no conflicts, add reservation
