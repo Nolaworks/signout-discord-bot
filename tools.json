@@ -41,6 +41,19 @@
                 {
                     "user": "mmennelle",
                     "time": "03-17-2025 20:00 to 03-17-2025 21:00"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 22:00 to 03-18-2025 00:00"
+                }
+            ]
+        },
+        "benja": {
+            "max_time_hours": 168,
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 18:15 to 03-17-2025 19:00"
                 }
             ]
         }
