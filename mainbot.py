@@ -147,9 +147,23 @@ async def reservations(interaction: discord.Interaction):
         return
 
     data = load_tools()
-    reservations_list = "\n".join([f"- {r['user']} at {r['time']}" for r in data["tools"].get(tool, [])])
 
-    await interaction.followup.send(f"Reservations for {tool}:\n{reservations_list or 'None'}")
+    # Ensure the tool exists in tools.json
+    if tool not in data["tools"]:
+        await interaction.followup.send(f"No reservations found. **Tool '{tool}' does not exist.**", ephemeral=True)
+        return
+
+    reservations = data["tools"][tool].get("reservations", [])
+
+    # If there are no reservations, notify the user
+    if not reservations:
+        await interaction.followup.send(f" **No active reservations** for `{tool}`.", ephemeral=True)
+        return
+
+    reservations_list = "\n".join([f"- **{r['user']}** at `{r['time']}`" for r in reservations])
+
+    await interaction.followup.send(f"📌 **Reservations for `{tool}`:**\n{reservations_list}")
+
 
 @bot.tree.command(name="signout", description="Sign out a tool at a specific time")
 async def signout(interaction: discord.Interaction, time: str):
