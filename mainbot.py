@@ -179,7 +179,7 @@ async def signout(interaction: discord.Interaction, time: str):
 
     # Auto-create tool if it doesn't exist
     if tool not in data["tools"]:
-        data["tools"][tool] = {"max_time_hours": 12, "reservations": []}  # Default 12-hour limit
+        data["tools"][tool] = {"max_time_hours": 168, "reservations": []}  # Default 1-week limit
         save_tools(data)
         logging.info(f"Auto-created tool {tool} in tools.json.")
 
@@ -237,7 +237,7 @@ async def on_guild_channel_create(channel):
 
         data = load_tools()
         if tool_name not in data["tools"]:
-            data["tools"][tool_name] = {"max_time_hours": 12, "reservations": []}  # Default settings
+            data["tools"][tool_name] = {"max_time_hours": 168, "reservations": []}  # Default settings
             save_tools(data)
             logging.info(f"Auto-created tool '{tool_name}' from channel '{channel.name}'.")
 
