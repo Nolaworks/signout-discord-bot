@@ -1,6 +1,6 @@
 import json
 import os
-from mainbot import parse_time_with_gpt
+from gptparse import parse_time_with_gpt
 from discord import app_commands
 from discord.ext import commands
 
@@ -76,7 +76,7 @@ class AdminPanel(commands.Cog):
                 save_tools(data)
 
                 await interaction.response.send_message(
-                    f"✅ Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.",
+                    f"Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.",
                     ephemeral=True
                 )
                 return
