@@ -11,17 +11,14 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from admin_panel import AdminPanel
+from gptparse import parse_time_with_gpt
+
+#Discord Token load
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
-
-# Load environment variables
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Initialize OpenAI client
-openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Set up bot
 intents = discord.Intents.default()
@@ -57,18 +54,22 @@ async def clean_expired_signouts():
     central_tz = pytz.timezone("America/Chicago")
     now = datetime.datetime.now(central_tz)
 
-    for tool, reservations in data["tools"].items():
+    for tool, tool_data in data["tools"].items():
+        if "reservations" not in tool_data:
+            continue  # Skip tools without reservations
+
         valid_reservations = []
-        for r in reservations:
+
+        for r in tool_data["reservations"]:
             try:
-                # Check if it's a time range (e.g., "03-14-2025 14:00 to 15:00")
+                if not isinstance(r, dict) or "time" not in r:
+                    logging.error(f"Skipping malformed reservation entry for {tool}: {r}")
+                    continue  # Skip invalid reservations
+
                 if " to " in r["time"]:
                     start_time_str, end_time_str = r["time"].split(" to ")
                     start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
-                    end_time = datetime.datetime.strptime(
-                        f"{start_time.strftime('%m-%d-%Y')} {end_time_str}",
-                        "%m-%d-%Y %H:%M"
-                    )
+                    end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
                 else:
                     # Single reservation time
                     start_time = datetime.datetime.strptime(r["time"], "%m-%d-%Y %H:%M")
@@ -78,61 +79,20 @@ async def clean_expired_signouts():
                 start_time = central_tz.localize(start_time)
                 end_time = central_tz.localize(end_time)
 
+                # Remove expired reservations
                 if end_time > now:
                     valid_reservations.append(r)  # Keep only valid reservations
+                else:
+                    logging.info(f"Removing expired reservation for {tool}: {r['user']} at {r['time']}")
 
             except ValueError:
-                logging.error(f"Malformed reservation time: {r['time']}")
-        
-        data["tools"][tool] = valid_reservations  # Update the list with valid ones
+                logging.error(f"Malformed reservation time for {tool}: {r.get('time', 'UNKNOWN')}")
+
+        # Update the list of valid reservations
+        data["tools"][tool]["reservations"] = valid_reservations
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")
-
-
-async def parse_time_with_gpt(time_str):
-    """Uses OpenAI to parse a user-provided time string into MM-DD-YYYY HH:MM or a range MM-DD-YYYY HH:MM to HH:MM."""
-    central_tz = pytz.timezone("America/Chicago")
-    current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
-
-    prompt = f"""
-    Convert the following time expression into a standard format:
-    - consider all times as present to future. there will be no past times
-    - If it's a single time, return (MM-DD-YYYY HH:MM).
-    - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
-    - DO NOT return any extra text, explanations, or timezone information.
-
-    Use the current date and time: {current_time} (U.S. Central Time) as a reference.
-    If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
-    If this doesn't help, return 'ERROR'.
-
-    Now process: {time_str}
-    """
-
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "system", "content": prompt}]
-    )
-
-    formatted_time = response.choices[0].message.content.strip()
-    logging.info(f"OpenAI raw response: {formatted_time}")
-
-    if "to" in formatted_time:
-        try:
-            start_time_str, end_time_str = formatted_time.split(" to ")
-            start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
-            end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
-            return f"{start_time.strftime('%m-%d-%Y %H:%M')} to {end_time.strftime('%m-%d-%Y %H:%M')}"
-        except ValueError:
-            logging.error(f"Malformed time range from OpenAI: {formatted_time}")
-        return None
-    else:
-        try:
-            datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
-            return formatted_time
-        except ValueError:
-            logging.error(f"Malformed time from OpenAI: {formatted_time}")
-        return None
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
 async def reservations(interaction: discord.Interaction):
@@ -179,7 +139,7 @@ async def signout(interaction: discord.Interaction, time: str):
 
     # Auto-create tool if it doesn't exist
     if tool not in data["tools"]:
-        data["tools"][tool] = {"max_time_hours": 12, "reservations": []}  # Default 12-hour limit
+        data["tools"][tool] = {"max_time_hours": 168, "reservations": []}  # Default 1-week limit
         save_tools(data)
         logging.info(f"Auto-created tool {tool} in tools.json.")
 
@@ -237,7 +197,7 @@ async def on_guild_channel_create(channel):
 
         data = load_tools()
         if tool_name not in data["tools"]:
-            data["tools"][tool_name] = {"max_time_hours": 12, "reservations": []}  # Default settings
+            data["tools"][tool_name] = {"max_time_hours": 168, "reservations": []}  # Default settings
             save_tools(data)
             logging.info(f"Auto-created tool '{tool_name}' from channel '{channel.name}'.")
 
