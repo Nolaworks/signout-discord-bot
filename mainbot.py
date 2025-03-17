@@ -162,49 +162,74 @@ async def signout(interaction: discord.Interaction, time: str):
     await interaction.response.defer(thinking=True)
 
     data = load_tools()
+
+    # Auto-create tool if it doesn't exist
+    if tool not in data["tools"]:
+        data["tools"][tool] = {"max_time_hours": 12, "reservations": []}  # Default 12-hour limit
+        save_tools(data)
+        logging.info(f"Auto-created tool {tool} in tools.json.")
+
     formatted_time = await parse_time_with_gpt(time)
 
     if not formatted_time:
         await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
         return
 
-    # Ensure the tool exists
-    if tool not in data["tools"]:
-        await interaction.followup.send(f"The tool '{tool}' does not exist.", ephemeral=True)
-        return
-    
-    # Ensure the tool is properly structured
-    if not isinstance(data["tools"][tool], dict):
-        data["tools"][tool] = {"reservations": [], "max_time": 24}  # Default max time
+    max_time_hours = data["tools"][tool].get("max_time_hours", 12)
 
-    # Retrieve max allowed signout time for this tool
-    max_hours = data["tools"][tool].get("max_time", 24)
-
-    # Parse the reservation time and check duration
-    if "to" in formatted_time:
+    # Parse start and end times
+    if " to " in formatted_time:
         start_time_str, end_time_str = formatted_time.split(" to ")
         start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
         end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
-
-        duration = (end_time - start_time).total_seconds() / 3600  # Convert to hours
-        if duration > max_hours:
-            await interaction.followup.send(f"Cannot sign out {tool} for more than {max_hours} hours.", ephemeral=True)
-            return
     else:
-        # If it's a single time, assume a duration of 1 hour (or could adjust logic)
-        pass
+        start_time = datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
+        end_time = start_time  # No explicit end time, assume single-time reservation
 
-    # Check for duplicate reservations
-    for reservation in data["tools"][tool]["reservations"]:
-        if reservation["user"] == interaction.user.name and reservation["time"] == formatted_time:
-            await interaction.followup.send("You have already reserved this tool for the same time.", ephemeral=True)
+    # Check if reservation exceeds max allowed time for this tool
+    max_duration = datetime.timedelta(hours=max_time_hours)
+    if (end_time - start_time) > max_duration:
+        await interaction.followup.send(f"Sign-out time exceeds the max allowed for **{tool}** ({max_time_hours} hours).", ephemeral=True)
+        return
+
+    # Check for reservation conflicts
+    for reservation in data["tools"][tool].get("reservations", []):
+        existing_start, existing_end = None, None
+
+        if " to " in reservation["time"]:
+            existing_start_str, existing_end_str = reservation["time"].split(" to ")
+            existing_start = datetime.datetime.strptime(existing_start_str, "%m-%d-%Y %H:%M")
+            existing_end = datetime.datetime.strptime(existing_end_str, "%m-%d-%Y %H:%M")
+        else:
+            existing_start = datetime.datetime.strptime(reservation["time"], "%m-%d-%Y %H:%M")
+            existing_end = existing_start  # Assume single-time reservation
+
+        # Check if time ranges overlap
+        if not (end_time <= existing_start or start_time >= existing_end):
+            await interaction.followup.send(f"Time conflict detected with another reservation: **{reservation['user']}** at **{reservation['time']}**.", ephemeral=True)
             return
 
-    # Store the reservation
+    # If no conflicts, add reservation
     data["tools"][tool]["reservations"].append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
     await interaction.followup.send(f"{tool} signed out for {formatted_time} by {interaction.user.name}!")
 
+
+@bot.event
+async def on_guild_channel_create(channel):
+    """Automatically creates a tool when a 'signout-[tool]' channel is created."""
+    if isinstance(channel, discord.TextChannel) and channel.name.startswith("signout-"):
+        tool_name = channel.name.replace("signout-", "")
+
+        data = load_tools()
+        if tool_name not in data["tools"]:
+            data["tools"][tool_name] = {"max_time_hours": 12, "reservations": []}  # Default settings
+            save_tools(data)
+            logging.info(f"Auto-created tool '{tool_name}' from channel '{channel.name}'.")
+
+        bot_channel = discord.utils.get(channel.guild.text_channels, name=channel.name)
+        if bot_channel:
+            await bot_channel.send(f"Tool '{tool_name}' has been added for reservations.")
 
 @bot.event
 async def on_ready():
