@@ -4,25 +4,57 @@
             "reservations": [],
             "max_time": 24
         },
-        "cnc": [
-            {
-                "user": "mmennelle",
-                "time": "03-20-2025 01:00 to 02:00"
-            },
-            {
-                "user": "mmennelle",
-                "time": "03-18-2025 03:00 to 16:00"
-            },
-            {
-                "user": "mmennelle",
-                "time": "03-16-2025 00:02"
-            }
-        ],
-        "drill": [
-            {
-                "user": "mmennelle",
-                "time": "03-15-2025 12:03 to 15:00"
-            }
-        ]
+        "cnc": {
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-16-2025 11:30 to 03-16-2025 14:00"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-16-2025 11:12 to 03-16-2025 11:12"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-16-2025 11:12 to 03-16-2025 14:12"
+                }
+            ],
+            "max_time": 24
+        },
+        "drill": {
+            "reservations": [],
+            "max_time": 5
+        },
+        "david": {
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-18-2025 14:00 to 03-18-2025 17:00"
+                }
+            ],
+            "max_time": 24
+        },
+        "tool2": {
+            "max_time_hours": 12,
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 16:00 to 03-17-2025 18:00"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 15:34 to 03-17-2025 16:00"
+                }
+            ]
+        },
+        "welder": {
+            "max_time_hours": 12,
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 15:39 to 03-17-2025 17:00"
+                }
+            ]
+        }
     }
 }
