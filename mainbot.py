@@ -11,17 +11,14 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from admin_panel import AdminPanel
+from gptparse import parse_time_with_gpt
+
+#Discord Token load
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
-
-# Load environment variables
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Initialize OpenAI client
-openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Set up bot
 intents = discord.Intents.default()
@@ -96,51 +93,6 @@ async def clean_expired_signouts():
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")
-
-
-async def parse_time_with_gpt(time_str):
-    """Uses OpenAI to parse a user-provided time string into MM-DD-YYYY HH:MM or a range MM-DD-YYYY HH:MM to HH:MM."""
-    central_tz = pytz.timezone("America/Chicago")
-    current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
-
-    prompt = f"""
-    Convert the following time expression into a standard format:
-    - consider all times as present to future. there will be no past times
-    - If it's a single time, return (MM-DD-YYYY HH:MM).
-    - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
-    - DO NOT return any extra text, explanations, or timezone information.
-
-    Use the current date and time: {current_time} (U.S. Central Time) as a reference.
-    If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
-    If this doesn't help, return 'ERROR'.
-
-    Now process: {time_str}
-    """
-
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "system", "content": prompt}]
-    )
-
-    formatted_time = response.choices[0].message.content.strip()
-    logging.info(f"OpenAI raw response: {formatted_time}")
-
-    if "to" in formatted_time:
-        try:
-            start_time_str, end_time_str = formatted_time.split(" to ")
-            start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
-            end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
-            return f"{start_time.strftime('%m-%d-%Y %H:%M')} to {end_time.strftime('%m-%d-%Y %H:%M')}"
-        except ValueError:
-            logging.error(f"Malformed time range from OpenAI: {formatted_time}")
-        return None
-    else:
-        try:
-            datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
-            return formatted_time
-        except ValueError:
-            logging.error(f"Malformed time from OpenAI: {formatted_time}")
-        return None
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
 async def reservations(interaction: discord.Interaction):
