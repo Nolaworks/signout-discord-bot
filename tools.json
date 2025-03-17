@@ -5,20 +5,7 @@
             "max_time": 24
         },
         "cnc": {
-            "reservations": [
-                {
-                    "user": "mmennelle",
-                    "time": "03-16-2025 11:30 to 03-16-2025 14:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-16-2025 11:12 to 03-16-2025 11:12"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-16-2025 11:12 to 03-16-2025 14:12"
-                }
-            ],
+            "reservations": [],
             "max_time": 24
         },
         "drill": {
@@ -40,10 +27,6 @@
                 {
                     "user": "mmennelle",
                     "time": "03-17-2025 16:00 to 03-17-2025 18:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-17-2025 15:34 to 03-17-2025 16:00"
                 }
             ]
         },
@@ -52,7 +35,11 @@
             "reservations": [
                 {
                     "user": "mmennelle",
-                    "time": "03-17-2025 15:39 to 03-17-2025 17:00"
+                    "time": "03-17-2025 17:00 to 03-17-2025 18:00"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 19:00 to 03-17-2025 20:00"
                 }
             ]
         }

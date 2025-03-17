@@ -57,18 +57,22 @@ async def clean_expired_signouts():
     central_tz = pytz.timezone("America/Chicago")
     now = datetime.datetime.now(central_tz)
 
-    for tool, reservations in data["tools"].items():
+    for tool, tool_data in data["tools"].items():
+        if "reservations" not in tool_data:
+            continue  # Skip tools without reservations
+
         valid_reservations = []
-        for r in reservations:
+
+        for r in tool_data["reservations"]:
             try:
-                # Check if it's a time range (e.g., "03-14-2025 14:00 to 15:00")
+                if not isinstance(r, dict) or "time" not in r:
+                    logging.error(f"Skipping malformed reservation entry for {tool}: {r}")
+                    continue  # Skip invalid reservations
+
                 if " to " in r["time"]:
                     start_time_str, end_time_str = r["time"].split(" to ")
                     start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
-                    end_time = datetime.datetime.strptime(
-                        f"{start_time.strftime('%m-%d-%Y')} {end_time_str}",
-                        "%m-%d-%Y %H:%M"
-                    )
+                    end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
                 else:
                     # Single reservation time
                     start_time = datetime.datetime.strptime(r["time"], "%m-%d-%Y %H:%M")
@@ -78,13 +82,17 @@ async def clean_expired_signouts():
                 start_time = central_tz.localize(start_time)
                 end_time = central_tz.localize(end_time)
 
+                # Remove expired reservations
                 if end_time > now:
                     valid_reservations.append(r)  # Keep only valid reservations
+                else:
+                    logging.info(f"Removing expired reservation for {tool}: {r['user']} at {r['time']}")
 
             except ValueError:
-                logging.error(f"Malformed reservation time: {r['time']}")
-        
-        data["tools"][tool] = valid_reservations  # Update the list with valid ones
+                logging.error(f"Malformed reservation time for {tool}: {r.get('time', 'UNKNOWN')}")
+
+        # Update the list of valid reservations
+        data["tools"][tool]["reservations"] = valid_reservations
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")
