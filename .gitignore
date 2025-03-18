@@ -2,3 +2,11 @@ signout-venv
 __pycache__
 settings.json
 tools.json
+.bash_history
+.bash_logout
+.bashrc
+.gitconfig
+.lesshst
+.profile
+.sudo_as_admin_successful
+.wget-hsts
