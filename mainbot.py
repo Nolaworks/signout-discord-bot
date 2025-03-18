@@ -188,6 +188,18 @@ async def signout(interaction: discord.Interaction, time: str):
     save_tools(data)
     await interaction.followup.send(f"{tool} signed out for {formatted_time} by {interaction.user.name}!")
 
+@bot.tree.command(name="returntool", description="Return a tool")
+@app_commands.describe(tool="Tool name")
+async def tool_return(interaction: discord.Interaction, tool: str):
+
+    data = load_tools()
+    if tool in data["tools"] and data["tools"][tool]["reservations"]:
+        data["tools"][tool]["reservations"].pop(0)
+        save_tools(data)
+        await interaction.response.send_message(f"{tool} has been returned.")
+    else:
+        await interaction.response.send_message(f"No active reservations for {tool}.", ephemeral=True)
+
 
 @bot.event
 async def on_guild_channel_create(channel):

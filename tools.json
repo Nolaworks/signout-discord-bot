@@ -24,9 +24,14 @@
             ],
             "max_time": 36
         },
-        "cnc": {
+        "domino": {
             "max_time_hours": 168,
-            "reservations": []
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-18-2025 10:54 to 03-18-2025 17:00"
+                }
+            ]
         }
     }
 }
