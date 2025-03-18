@@ -11,22 +11,18 @@
             "max_time": 36
         },
         "robot": {
-            "max_time_hours": 168,
+            "max_time_hours": 36,
             "reservations": [
                 {
                     "user": "mmennelle",
-                    "time": "03-17-2025 20:34 to 03-18-2025 10:00"
+                    "time": "03-18-2025 10:05 to 03-18-2025 15:00"
                 }
-            ]
+            ],
+            "max_time": 36
         },
         "cnc": {
             "max_time_hours": 168,
-            "reservations": [
-                {
-                    "user": "mmennelle",
-                    "time": "03-18-2025 07:15 to 03-18-2025 10:00"
-                }
-            ]
+            "reservations": []
         }
     }
 }
