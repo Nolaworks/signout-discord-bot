@@ -21,6 +21,7 @@ def save_tools(data):
 def is_admin(interaction):
     """Returns True if the user has admin privileges, False otherwise."""
     admin_roles = {"Admin", "Moderator", "Board Member"}  # Adjust role names as needed
+    print(f"User: {interaction.user.name}, Roles: {[role.name for role in interaction.user.roles]}")  # Debugging
     return any(role.name in admin_roles for role in interaction.user.roles)
 
 
@@ -98,6 +99,53 @@ class AdminPanel(commands.Cog):
                 return
 
         await interaction.response.send_message(f"Reservation `{old_time}` not found for `{user}`.", ephemeral=True)
+
+    @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
+    @app_commands.describe(tool="Tool name", hours="Max sign-out duration in hours")
+    async def set_max_time(self, interaction, tool: str, hours: int):
+
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
+        
+        data = load_tools()
+        if tool in data["tools"]:
+            if not isinstance(data["tools"][tool], dict):  # Ensure tool data is in dict format
+                data["tools"][tool] = {"reservations": [], "max_time": hours}
+            else:
+                data["tools"][tool]["max_time"] = hours
+            save_tools(data)
+            await interaction.response.send_message(f"Maximum sign-out time for {tool} set to {hours} hours.")
+        else:
+            await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
+
+    @app_commands.command(name="forcereturn", description="Admin: Force return a tool")
+    @app_commands.describe(tool="Tool name")
+    async def force_return(self, interaction, tool: str):
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
+        data = load_tools()
+        if tool in data["tools"] and data["tools"][tool]["reservations"]:
+            data["tools"][tool]["reservations"].pop(0)
+            save_tools(data)
+            await interaction.response.send_message(f"{tool} has been forcibly returned.")
+        else:
+            await interaction.response.send_message(f"No active reservations for {tool}.", ephemeral=True)
+
+    @app_commands.command(name="clearreservations", description="Admin: Clear all reservations for a tool")
+    @app_commands.describe(tool="Tool name")
+    async def clear_reservations(self, interaction, tool: str):
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
+        data = load_tools()
+        if tool in data["tools"]:
+            data["tools"][tool]["reservations"] = []
+            save_tools(data)
+            await interaction.response.send_message(f"All reservations for {tool} have been cleared.")
+        else:
+            await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
     @adjust_time.autocomplete("old_time")
     async def old_time_autocomplete(self, interaction: discord.Interaction, current: str):
