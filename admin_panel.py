@@ -27,6 +27,12 @@ def save_settings(data):
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
+def is_admin(interaction):
+    """Returns True if the user has admin privileges, False otherwise."""
+    admin_roles = {"Admin", "Moderator", "Board Member"}  # Adjust role names as needed
+    return any(role.name in admin_roles for role in interaction.user.roles)
+
+
 class AdminPanel(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -48,10 +54,10 @@ class AdminPanel(commands.Cog):
             if r["user"].lower() == interaction.user.name.lower()
         ][:25]  # Discord API limit
 
-    @app_commands.command(name="adjusttime", description="Admin: Adjust a reservation time for a user")
+    @app_commands.command(name="adjusttime", description="Adjust your reservation time (Admins can adjust any user)")
     @app_commands.autocomplete(old_time=reservation_autocomplete)
     async def adjust_time(self, interaction, tool: str, user: str, old_time: str, new_time: str):
-        """Allows an admin to adjust a specific user's reservation time using GPT for formatting."""
+        """Allows a user to adjust their own reservation. Admins can adjust any user's reservation."""
         
         data = load_tools()
 
@@ -60,6 +66,14 @@ class AdminPanel(commands.Cog):
             return
 
         reservations = data["tools"][tool].get("reservations", [])
+
+        # If the user is not an admin, restrict them to modifying their own reservations
+        if not is_admin(interaction) and user.lower() != interaction.user.name.lower():
+            await interaction.response.send_message(
+                "You can only modify your own reservations. Contact a shop leader if you need assistance.",
+                ephemeral=True
+            )
+            return
 
         # Find reservation by user & selected old_time
         for res in reservations:
@@ -76,7 +90,7 @@ class AdminPanel(commands.Cog):
                 save_tools(data)
 
                 await interaction.response.send_message(
-                    f"Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.",
+                    f"✅ Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.",
                     ephemeral=True
                 )
                 return
@@ -86,6 +100,9 @@ class AdminPanel(commands.Cog):
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
     @app_commands.describe(tool="Tool name", hours="Max sign-out duration in hours")
     async def set_max_time(self, interaction, tool: str, hours: int):
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
         data = load_tools()
         if tool in data["tools"]:
             if not isinstance(data["tools"][tool], dict):  # Ensure tool data is in dict format
@@ -100,6 +117,9 @@ class AdminPanel(commands.Cog):
     @app_commands.command(name="forcereturn", description="Admin: Force return a tool")
     @app_commands.describe(tool="Tool name")
     async def force_return(self, interaction, tool: str):
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
         data = load_tools()
         if tool in data["tools"] and data["tools"][tool]["reservations"]:
             data["tools"][tool]["reservations"].pop(0)
@@ -111,6 +131,9 @@ class AdminPanel(commands.Cog):
     @app_commands.command(name="clearreservations", description="Admin: Clear all reservations for a tool")
     @app_commands.describe(tool="Tool name")
     async def clear_reservations(self, interaction, tool: str):
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
         data = load_tools()
         if tool in data["tools"]:
             data["tools"][tool]["reservations"] = []
