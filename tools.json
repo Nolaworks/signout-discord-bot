@@ -1,3 +1,17 @@
 {
-    "tools": {}
+    "tools": {
+        "welder": {
+            "max_time_hours": 168,
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-20-2025 20:00 to 03-20-2025 15:00"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-17-2025 20:00 to 03-17-2025 21:00"
+                }
+            ]
+        }
+    }
 }
