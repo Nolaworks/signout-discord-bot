@@ -57,6 +57,36 @@ class AdminPanel(commands.Cog):
             app_commands.Choice(name=f"{r['user']} - {r['time']}", value=r["time"])
             for r in filtered_reservations if current.lower() in r["time"].lower()
         ][:25]  # Limit to 25 options (Discord API max)
+    
+    @app_commands.command(name="addtool", description="Admin: Add a tool manually")
+    @app_commands.describe(tool="Tool name")
+    async def add_tool(self, interaction, tool: str):
+        # If the user is not an admin, no go
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
+        data = load_tools()
+        if tool in data["tools"]:
+            await interaction.response.send_message(f"Tool {tool} already exists.", ephemeral=True)
+        else:
+            data["tools"][tool] = []
+            save_tools(data)
+            await interaction.response.send_message(f"Tool {tool} has been added.")
+ 
+    @app_commands.command(name="removetool", description="Admin: Remove a tool")
+    @app_commands.describe(tool="Tool name")
+    async def remove_tool(self, interaction, tool: str):
+        # If the user is not an admin, no go
+        if not is_admin(interaction):
+            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+            return
+        data = load_tools()
+        if tool in data["tools"]:
+            del data["tools"][tool]
+            save_tools(data)
+            await interaction.response.send_message(f"Tool {tool} has been removed.")
+        else:
+            await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
     @app_commands.command(name="adjusttime", description="Adjust your reservation time")
     async def adjust_time(self, interaction: discord.Interaction, tool: str, user: str, old_time: str, new_time: str):
