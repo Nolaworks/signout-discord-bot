@@ -111,11 +111,11 @@ class AdminPanel(commands.Cog):
         data = load_tools()
         if tool in data["tools"]:
             if not isinstance(data["tools"][tool], dict):  # Ensure tool data is in dict format
-                data["tools"][tool] = {"reservations": [], "max_time": hours}
+                data["tools"][tool] = {"reservations": [], "max_time_hours": hours}
             else:
-                data["tools"][tool]["max_time"] = hours
+                data["tools"][tool]["max_time_hours"] = hours
             save_tools(data)
-            await interaction.response.send_message(f"Maximum sign-out time for {tool} set to {hours} hours.")
+            await interaction.response.send_message(f"Maximum signout time for {tool} set to {hours} hours.")
         else:
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
