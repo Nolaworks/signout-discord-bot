@@ -58,7 +58,7 @@ class AdminPanel(commands.Cog):
             for r in filtered_reservations if current.lower() in r["time"].lower()
         ][:25]  # Limit to 25 options (Discord API max)
 
-    @app_commands.command(name="adjusttime", description="Adjust your reservation time (Admins can adjust any user)")
+    @app_commands.command(name="adjusttime", description="Adjust your reservation time")
     async def adjust_time(self, interaction: discord.Interaction, tool: str, user: str, old_time: str, new_time: str):
         """Allows a user to adjust their own reservation. Admins can adjust any user's reservation."""
         
@@ -93,7 +93,7 @@ class AdminPanel(commands.Cog):
                 save_tools(data)
 
                 await interaction.response.send_message(
-                    f"✅ Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.",
+                    f"✔️ Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.",
                     ephemeral=True
                 )
                 return
@@ -129,7 +129,7 @@ class AdminPanel(commands.Cog):
         if tool in data["tools"] and data["tools"][tool]["reservations"]:
             data["tools"][tool]["reservations"].pop(0)
             save_tools(data)
-            await interaction.response.send_message(f"{tool} has been forcibly returned.")
+            await interaction.response.send_message(f"{tool} has been admin returned.")
         else:
             await interaction.response.send_message(f"No active reservations for {tool}.", ephemeral=True)
 
