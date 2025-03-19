@@ -5,27 +5,29 @@
             "reservations": [
                 {
                     "user": "mmennelle",
-                    "time": "03-20-2025 20:00 to 03-20-2025 15:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-21-2025 12:00 to 03-21-2025 18:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 13:00 to 03-19-2025 17:00"
+                    "time": "03-19-2025 17:00 to 03-19-2025 18:00"
                 }
             ],
             "max_time": 36
         },
         "robot": {
             "max_time_hours": 36,
-            "reservations": [],
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-19-2025 13:06 to 03-19-2025 14:00"
+                }
+            ],
             "max_time": 36
         },
         "domino": {
             "max_time_hours": 168,
-            "reservations": []
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-19-2025 14:00 to 03-19-2025 16:00"
+                }
+            ]
         },
         "fluxcapacitor": {
             "max_time_hours": 168,
@@ -46,10 +48,6 @@
                 {
                     "user": "mmennelle",
                     "time": "03-19-2025 17:00 to 03-19-2025 19:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 12:05 to 03-19-2025 13:05"
                 },
                 {
                     "user": "mmennelle",
