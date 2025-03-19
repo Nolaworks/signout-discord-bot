@@ -22,6 +22,7 @@ async def parse_time_with_gpt(time_str):
     - all times will be either present or future.
     - If it's a single time, return (MM-DD-YYYY HH:MM).
     - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
+    - Treat input like "H to H" as a time range that is the next available hours that fits within the current day. 
     - DO NOT return any extra text, explanations, or timezone information.
     - DO NOT return a time that is earlier than current. 
 
