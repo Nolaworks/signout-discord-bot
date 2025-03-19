@@ -16,26 +16,38 @@
         },
         "robot": {
             "max_time_hours": 36,
-            "reservations": [
-                {
-                    "user": "mmennelle",
-                    "time": "03-18-2025 10:05 to 03-18-2025 15:00"
-                }
-            ],
+            "reservations": [],
             "max_time": 36
         },
         "domino": {
             "max_time_hours": 168,
+            "reservations": []
+        },
+        "fluxcapacitor": {
+            "max_time_hours": 168,
+            "reservations": []
+        },
+        "waterbottle": {
+            "max_time_hours": 168,
             "reservations": [
                 {
                     "user": "mmennelle",
-                    "time": "03-18-2025 15:00 to 03-18-2025 17:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-18-2025 17:00 to 03-18-2025 18:00"
+                    "time": "03-19-2025 22:46 to 03-20-2025 05:00"
                 }
             ]
+        },
+        "spraybooth": {
+            "max_time_hours": 48,
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-19-2025 17:00 to 03-19-2025 19:00"
+                }
+            ]
+        },
+        "athing": {
+            "max_time_hours": 168,
+            "reservations": []
         }
     }
 }
