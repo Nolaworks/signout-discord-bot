@@ -19,19 +19,21 @@ async def parse_time_with_gpt(time_str):
 
     prompt = f"""
     Convert the following time expression into a standard format:
-    - all times will be either present or future.
+    - All times will be either present or future.
     - If it's a single time, return (MM-DD-YYYY HH:MM).
     - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
-    - Treat input like "H to H" as a time range that is the next available hours that fits within the current day. 
+    - If the input follows the format "H to H" or "H until H" (e.g., "3 to 5"), interpret it as the next available time range within the next 12-hours, ensuring it starts in the future and does not extend past 12-hours.
+    - If the input follows the format "MM/DD to MM/DD" or any variation of it (eg. M/D - M/DD). treat it as a time range starting at 00:00 of the first date. 
     - DO NOT return any extra text, explanations, or timezone information.
-    - DO NOT return a time that is earlier than current. 
+    - DO NOT return a time that is earlier than the current time. 
 
     Use the current date and time: {current_time} (U.S. Central Time) as a reference.
     If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
     If this doesn't help, return 'ERROR'.
 
     Now process: {time_str}
-    """
+"""
+
 
     response = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
