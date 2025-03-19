@@ -1,7 +1,5 @@
 signout-venv
 __pycache__
-settings.json
-tools.json
 .bash_history
 .bash_logout
 .bashrc
