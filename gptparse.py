@@ -19,10 +19,11 @@ async def parse_time_with_gpt(time_str):
 
     prompt = f"""
     Convert the following time expression into a standard format:
-    - consider all times as present to future. there will be no past times
+    - all times will be either present or future.
     - If it's a single time, return (MM-DD-YYYY HH:MM).
     - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
     - DO NOT return any extra text, explanations, or timezone information.
+    - DO NOT return a time that is earlier than current. 
 
     Use the current date and time: {current_time} (U.S. Central Time) as a reference.
     If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
