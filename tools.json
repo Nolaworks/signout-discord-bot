@@ -5,29 +5,23 @@
             "reservations": [
                 {
                     "user": "mmennelle",
-                    "time": "03-19-2025 17:00 to 03-19-2025 18:00"
+                    "time": "03-19-2025 21:00 to 03-19-2025 21:30"
+                },
+                {
+                    "user": "mmennelle",
+                    "time": "03-21-2025 13:00 to 03-21-2025 20:00"
                 }
             ],
             "max_time": 36
         },
         "robot": {
             "max_time_hours": 36,
-            "reservations": [
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 13:06 to 03-19-2025 14:00"
-                }
-            ],
+            "reservations": [],
             "max_time": 36
         },
         "domino": {
             "max_time_hours": 168,
-            "reservations": [
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 14:00 to 03-19-2025 16:00"
-                }
-            ]
+            "reservations": []
         },
         "fluxcapacitor": {
             "max_time_hours": 168,
@@ -47,30 +41,13 @@
             "reservations": [
                 {
                     "user": "mmennelle",
-                    "time": "03-19-2025 17:00 to 03-19-2025 19:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 15:00 to 03-19-2025 16:00"
-                },
-                {
-                    "user": "mmennelle",
                     "time": "03-24-2025 17:00 to 03-24-2025 18:00"
                 }
             ]
         },
         "athing": {
             "max_time_hours": 168,
-            "reservations": [
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 13:00 to 03-19-2025 14:00"
-                },
-                {
-                    "user": "mmennelle",
-                    "time": "03-19-2025 15:00 to 03-19-2025 16:00"
-                }
-            ]
+            "reservations": []
         }
     }
 }
