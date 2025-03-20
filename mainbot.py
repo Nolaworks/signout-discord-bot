@@ -47,6 +47,13 @@ def save_tools(data):
         json.dump(data, f, indent=4)
     logging.info(f"Saved tools.json: {json.dumps(data, indent=2)}")
 
+def admin_user(user):
+    """Returns True if the user has admin privileges, False otherwise."""
+    admin_roles = {"Admin", "Moderator", "Board Member"}  # Adjust role names as needed
+    print(f"User: {user.name}, Roles: {[role.name for role in user.roles]}")  # Debugging
+    return any(role.name in admin_roles for role in user.roles)
+
+
 @tasks.loop(minutes=1)
 async def clean_expired_signouts():
     """Removes expired tool sign-outs automatically."""
@@ -93,6 +100,24 @@ async def clean_expired_signouts():
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")
+
+#def is_only_everyone(user):
+ #   """Returns True if the user has no roles except @everyone."""
+  #  return len(user.roles) == 1  # Only @everyone is assigned
+
+
+@bot.event
+async def on_message(message):
+    # Ignore messages from bots (including itself)
+    if message.author.bot or admin_user(message.author):
+        return
+
+    # Check if the channel starts with "signout-"
+    if message.channel.name.startswith("signout-") and not message.content.startswith("/"):
+        await message.channel.send(f"{message.author.mention}, Only slash commands are allowed for now. Try /signout.", delete_after=10)
+        await asyncio.sleep(5)
+        await message.delete()
+
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
 async def reservations(interaction: discord.Interaction):

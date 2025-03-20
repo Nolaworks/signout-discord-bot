@@ -47,7 +47,12 @@
         },
         "athing": {
             "max_time_hours": 168,
-            "reservations": []
+            "reservations": [
+                {
+                    "user": "mmennelle",
+                    "time": "03-20-2025 07:31 to 03-20-2025 11:31"
+                }
+            ]
         }
     }
 }
