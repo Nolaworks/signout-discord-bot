@@ -23,7 +23,8 @@ async def parse_time_with_gpt(time_str):
     - If it's a single time, return (MM-DD-YYYY HH:MM).
     - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
     - If the input follows the format "H to H" or "H until H" (e.g., "3 to 5"), interpret it as the next available time range that starts with the first number.q
-    - If the input follows the format "MM/DD to MM/DD" or any variation of it (eg. M/D - M/DD). treat it as a time range starting at 00:00 of the first date. 
+    - If the input follows the format "MM/DD to MM/DD" or any variation of it (eg. M/D - M/DD). treat it as a time range starting at 00:00 of the first date.
+    - If the input follows the format "MM mins (or minutes)" or ""H hours" (e.g. 30 minutes or 5 hours) treat as a range starting immediately extending for the length the input specifies. 
     - DO NOT return any extra text, explanations, or timezone information.
     - DO NOT return a time that is earlier than the current time. 
 
