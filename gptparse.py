@@ -18,22 +18,24 @@ async def parse_time_with_gpt(time_str):
     current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
 
     prompt = f"""
-    Convert the following time expression into a standard format:
-    - All times will be either present or future.
-    - If it's a single time, return (MM-DD-YYYY HH:MM).
-    - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
-    - If the input follows the format "H to H" or "H until H" (e.g., "3 to 5"), interpret it as the next available time range that starts with the first number.q
-    - If the input follows the format "MM/DD to MM/DD" or any variation of it (eg. M/D - M/DD). treat it as a time range starting at 00:00 of the first date.
-    - If the input follows the format "MM mins (or minutes)" or ""H hours" (e.g. 30 minutes or 5 hours) treat as a range starting immediately extending for the length the input specifies. 
-    - DO NOT return any extra text, explanations, or timezone information.
-    - DO NOT return a time that is earlier than the current time. 
+    You are a time expression parser. Convert the following time expression into a standard format:
+        - All times will be either present or future.
+        - If it's a single time, return (MM-DD-YYYY HH:MM).
+        - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
+        - If the input follows the format "H to H" or "H until H" (e.g., "3 to 5" or "3 until 5"), interpret it as the next available time range that starts with the first number.
+            - If the second number is smaller than the first, assume it refers to the following day (e.g., "10 to 2" means 10 PM to 2 AM the next day).
+        - If the input follows the format "MM/DD to MM/DD" or any variation of it (e.g., "M/D - M/DD"), treat it as a time range starting at 00:00 of the first date.
+        - If the input follows the format "MM mins (or minutes)" or "H hours" (e.g., "30 minutes" or "5 hours"), treat it as a range starting immediately, extending for the length the input specifies.
+        - If this results in crossing midnight, adjust the date accordingly.
+        - DO NOT return any extra text, explanations, or timezone information.
+        - DO NOT return a time that is earlier than the current time.
 
-    Use the current date and time: {current_time} (U.S. Central Time) as a reference.
-    If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
-    If this doesn't help, return 'ERROR'.
+        Use the current date and time: {current_time} (U.S. Central Time) as a reference.
+        If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
+        If this doesn't help, return "ERROR."
 
-    Now process: {time_str}
-"""
+        Now process: {time_str}
+    """
 
 
     response = await openai_client.chat.completions.create(
