@@ -1,7 +1,7 @@
 # NOLAWorks Community Discord Tool Signout Bot
 
 ## Description
-This bot allows Discord users to manage tool reservations using the familiar signout-[tool] channels. It enables users to reserve tools via slash commands (e.g., `/signout` or `/adjusttime`). The bot also integrates with OpenAI’s API for natural language parsing, ensuring that time inputs are formatted consistently.
+This bot allows Discord users to manage tool reservations using the familiar signout-[tool] channels. It enables users to reserve tools via slash commands (e.g., `/signout` or `/adjusttime`). The bot also integrates with OpenAI’s API for natural language parsing, ensuring time inputs are formatted consistently.
 
 For example, if you type:  
 `/signout now to 5pm` at 11:24 AM, the bot will process this input using OpenAI and return a formatted time range:  
