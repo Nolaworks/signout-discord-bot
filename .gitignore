@@ -9,3 +9,4 @@ __pycache__
 .sudo_as_admin_successful
 .wget-hsts
 tools.json
+history.csv
