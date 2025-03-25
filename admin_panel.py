@@ -88,7 +88,7 @@ class AdminPanel(commands.Cog):
         else:
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
-    @app_commands.command(name="adjusttime", description="Adjust your reservation time")
+    @app_commands.command(name="adjusttime", description="Adjust or cancel your reservation time. To remove it just type ""cancel"" in the new time slot")
     async def adjust_time(self, interaction: discord.Interaction, tool: str, user: str, old_time: str, new_time: str):
         """Allows a user to adjust their own reservation. Admins can adjust any user's reservation."""
 
