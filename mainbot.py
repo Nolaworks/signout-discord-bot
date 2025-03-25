@@ -1,5 +1,6 @@
 import discord
 import json
+import csv
 import os
 import datetime
 import asyncio
@@ -25,8 +26,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# JSON File Path
+# tools and reservations file
 TOOLS_FILE = "tools.json"
+# old reservations storage file
+OLD_RESERVATIONS = "history.csv"
 
 def load_tools():
     """Loads tool reservations from JSON, or initializes an empty structure."""
@@ -40,6 +43,25 @@ def load_tools():
             logging.error("Error decoding JSON. Resetting tools.json.")
     
     return {"tools": {}}  # Ensure it always returns a valid dictionary
+def save_expired_to_csv(expired_reservations):
+    """Appends expired reservations to a CSV file."""
+    file_exists = os.path.exists(OLD_RESERVATIONS)
+
+    with open(OLD_RESERVATIONS, mode="a", newline="") as file:
+        writer = csv.writer(file)
+
+        # Write header only if the file doesn't exist
+        if not file_exists:
+            writer.writerow(["Tool", "User", "Time", "Removed On"])
+
+        for reservation in expired_reservations:
+            writer.writerow([
+                reservation["tool"],
+                reservation["user"],
+                reservation["time"],
+                datetime.datetime.now().strftime("%m-%d-%Y %H:%M")
+            ])
+
 
 def save_tools(data):
     """Saves tool reservations to JSON."""
@@ -66,6 +88,7 @@ async def clean_expired_signouts():
             continue  # Skip tools without reservations
 
         valid_reservations = []
+        expired_reservations = []
 
         for r in tool_data["reservations"]:
             try:
@@ -91,12 +114,16 @@ async def clean_expired_signouts():
                     valid_reservations.append(r)  # Keep only valid reservations
                 else:
                     logging.info(f"Removing expired reservation for {tool}: {r['user']} at {r['time']}")
+                    expired_reservations.append({"tool": tool, "user": r["user"], "time": r["time"]})
 
             except ValueError:
                 logging.error(f"Malformed reservation time for {tool}: {r.get('time', 'UNKNOWN')}")
 
         # Update the list of valid reservations
         data["tools"][tool]["reservations"] = valid_reservations
+
+    if expired_reservations:
+        save_expired_to_csv(expired_reservations)
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")

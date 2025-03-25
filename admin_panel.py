@@ -88,10 +88,10 @@ class AdminPanel(commands.Cog):
         else:
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
-    @app_commands.command(name="adjusttime", description="Adjust your reservation time")
+    @app_commands.command(name="adjusttime", description="Adjust or cancel your reservation time. To remove it just type ""cancel"" in the new time slot")
     async def adjust_time(self, interaction: discord.Interaction, tool: str, user: str, old_time: str, new_time: str):
         """Allows a user to adjust their own reservation. Admins can adjust any user's reservation."""
-        
+
         data = load_tools()
 
         if tool not in data["tools"]:
@@ -111,7 +111,19 @@ class AdminPanel(commands.Cog):
         # Find reservation by user & selected old_time
         for res in reservations:
             if res["user"].lower() == user.lower() and res["time"] == old_time:
-                # Parse new time using GPT
+                
+                if new_time.lower() == "cancel":
+                    # Remove reservation instead of adjusting
+                    reservations.remove(res)
+                    save_tools(data)
+
+                    await interaction.response.send_message(
+                        f"❌ Reservation for **{tool}** at `{old_time}` has been **canceled**.",
+                        ephemeral=True
+                    )
+                    return
+
+                # Otherwise, parse new time using GPT
                 formatted_time = await parse_time_with_gpt(new_time)
 
                 if not formatted_time:
@@ -129,6 +141,7 @@ class AdminPanel(commands.Cog):
                 return
 
         await interaction.response.send_message(f"Reservation `{old_time}` not found for `{user}`.", ephemeral=True)
+
 
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
     @app_commands.describe(tool="Tool name", hours="Max sign-out duration in hours")
