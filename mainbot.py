@@ -115,6 +115,7 @@ async def clean_expired_signouts():
                 else:
                     logging.info(f"Removing expired reservation for {tool}: {r['user']} at {r['time']}")
                     expired_reservations.append({"tool": tool, "user": r["user"], "time": r["time"]})
+                    save_expired_to_csv(expired_reservations)
 
             except ValueError:
                 logging.error(f"Malformed reservation time for {tool}: {r.get('time', 'UNKNOWN')}")
@@ -122,8 +123,9 @@ async def clean_expired_signouts():
         # Update the list of valid reservations
         data["tools"][tool]["reservations"] = valid_reservations
 
-    if expired_reservations:
-        save_expired_to_csv(expired_reservations)
+   # if expired_reservations:
+    #    for res in expired_reservations:
+     #       save_expired_to_csv(res)
 
     save_tools(data)
     logging.info("Expired signouts cleaned.")
