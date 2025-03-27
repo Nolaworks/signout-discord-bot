@@ -18,23 +18,50 @@ async def parse_time_with_gpt(time_str):
     current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
 
     prompt = f"""
-    You are a time expression parser. Convert the following time expression into a standard format:
-        - All times will be either present or future.
-        - If it's a single time, return (MM-DD-YYYY HH:MM).
-        - If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
-        - If the input follows the format "H to H" or "H until H" (e.g., "3 to 5" or "3 until 5"), interpret it as the next available time range that starts with the first number.
-            - If the second number is smaller than the first, assume it refers to the following day (e.g., "10 to 2" means 10 PM to 2 AM the next day).
-        - If the input follows the format "MM/DD to MM/DD" or any variation of it (e.g., "M/D - M/DD"), treat it as a time range starting at 00:00 of the first date.
-        - If the input follows the format "MM mins (or minutes)" or "H hours" (e.g., "30 minutes" or "5 hours"), treat it as a range starting immediately, extending for the length the input specifies.
-        - If this results in crossing midnight, adjust the date accordingly.
-        - DO NOT return any extra text, explanations, or timezone information.
-        - DO NOT return a time that is earlier than the current time.
+    time_parser_prompt = """
+You are a time expression parser. Convert the following time expression into a standard format:
 
-        Use the current date and time: {current_time} (U.S. Central Time) as a reference.
-        If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
-        If this doesn't help, return "ERROR."
+- All times will be either present or future.
+- If it's a single time, return (MM-DD-YYYY HH:MM).
+- If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
 
-        Now process: {time_str}
+Interpretation Rules:
+
+1. Hour Ranges:
+   - Formats like "H to H", "H until H", or "H-H" (e.g., "3 to 5", "3-5"):
+     - Treated as the next available time window.
+     - If the second hour is smaller than the first, it wraps to the next day.
+     - Example: "10 to 2" = 10 PM today to 2 AM tomorrow.
+
+2. Date Ranges:
+   - Formats like "MM/DD to MM/DD" or "M/D - M/DD":
+     - Interpreted as a range from 00:00 on the first date to 23:59 on the second.
+
+3. Durations:
+   - Formats like "MM mins", "MM minutes", "H hours":
+     - Treated as a range starting now, lasting the specified duration.
+
+4. Relative Time Words:
+   - "in X minutes" or "in X hours":
+     - Starts X units from now, lasts 1 hour by default unless stated otherwise.
+     - Example: "in 2 hours" → starts now + 2 hours, lasts 1 hour.
+   - "later today" or "later tonight":
+     - Starts at the next even hour after now (minimum 1 hour ahead), ends 2 hours later.
+     - If past 10 PM, assumes tomorrow morning at 8 AM for start.
+
+5. Day Names and Abbreviations:
+   - Accepts full or short weekday names: Monday, Mon, Tue, Wed, etc.
+   - Also accepts "tomorrow", "tom", and "next [weekday]".
+
+Constraints:
+
+- DO NOT return any extra text, explanations, or timezone information.
+- DO NOT return a time that is earlier than the current time.
+- Use the current date and time: {current_time} (U.S. Central Time) as a reference.
+- If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
+- If this doesn't help, return "ERROR."
+
+Now process: {time_str}
     """
 
 
