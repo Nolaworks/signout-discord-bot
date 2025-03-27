@@ -18,7 +18,6 @@ async def parse_time_with_gpt(time_str):
     current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
 
     prompt = f"""
-    time_parser_prompt = """
 You are a time expression parser. Convert the following time expression into a standard format:
 
 - All times will be either present or future.
