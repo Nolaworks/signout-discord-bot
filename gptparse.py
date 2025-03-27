@@ -35,9 +35,12 @@ Interpretation Rules:
        - "6-10" → 6 AM to 10 AM
 
 2. Date Ranges:
-   - Formats like "MM/DD to MM/DD" or "M/D - M/DD":
-     - Interpreted as a range from 00:00 on the first date to 23:59 on the second.
-     - Example: "03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59
+   - Formats like "MM/DD to MM/DD", "M/D - M/DD", or "MM/DD/YYYY to MM/DD/YYYY":
+     - Interpreted as a time range starting at 00:00 of the first day and ending at 23:59 of the last day.
+     - This includes ranges that span **multiple years**.
+     - Examples:
+       - "03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59
+       - "12/31/2025 to 01/01/2026" → 12-31-2025 00:00 to 01-01-2026 23:59
 
 3. Durations:
    - Formats like "MM mins", "MM minutes", "H hours", or forms like "32min":
@@ -84,8 +87,6 @@ Interpretation Rules:
        - "sat morning to noon" → next Saturday 08:00 to 12:00
 
 7. Unsupported or Vague Expressions:
-   - If the time range spans more than one calendar year, return "ERROR".
-      - Example: "12/31/2025 to 01/01/2026" → ERROR
    - If the input contains vague or open-ended terms such as "forever", "until further notice", "as long as needed", or "whenever", return "ERROR".
       - Example: "Friday 10am to forever" → ERROR
 

@@ -200,7 +200,7 @@ async def signout(interaction: discord.Interaction, time: str):
     formatted_time = await parse_time_with_gpt(time)
 
     if not formatted_time:
-        await interaction.followup.send("Couldn't understand the time format. Try again.", ephemeral=True)
+        await interaction.followup.send("I couldn't understand what you meant. Try it again, this time being a little more specific.", ephemeral=True)
         return
 
     max_time_hours = data["tools"][tool].get("max_time_hours", 12)
@@ -217,7 +217,7 @@ async def signout(interaction: discord.Interaction, time: str):
     # Check if reservation exceeds max allowed time for this tool
     max_duration = datetime.timedelta(hours=max_time_hours)
     if (end_time - start_time) > max_duration:
-        await interaction.followup.send(f"Sign-out time exceeds the max allowed for **{tool}** ({max_time_hours} hours).", ephemeral=True)
+        await interaction.followup.send(f"Signout time exceeds the max allowed for **{tool}** ({max_time_hours} hours).", ephemeral=True)
         return
 
     # Check for reservation conflicts
