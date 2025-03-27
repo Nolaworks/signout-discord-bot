@@ -58,9 +58,10 @@ Interpretation Rules:
      - Saturday, Sat
      - Sunday, Sun
    - Also accept "tomorrow", "tom", and "next [weekday]".
-   - Always resolve the weekday to the **next future occurrence**.
+   - Always resolve the weekday to the **next future occurrence** even crossing into a new month.
      - Example: If today is Wednesday and input is "Tuesday", return next Tuesday.
    - Examples:
+     - "weds 6pm to 8" sent on 03-27-2025 → next Wednesday 6pm to 8pm, which is 04-02-2025
      - "tues 6 to 9" → next Tuesday 6 AM to 9 AM
      - "weds 3-5" → next Wednesday 3 AM to 5 AM
      - "tom 10 to 2" → tomorrow 10 AM to 2 PM
