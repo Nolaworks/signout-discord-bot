@@ -49,13 +49,26 @@ Interpretation Rules:
      - If past 10 PM, assumes tomorrow morning at 8 AM for start.
 
 5. Day Names and Abbreviations:
-   - Accepts full or short weekday names: Monday, Mon, Tue, Wed, etc.
-   - Also accepts "tomorrow", "tom", and "next [weekday]".
+   - Accept full or abbreviated weekday names, including variations:
+     - Monday, Mon
+     - Tuesday, Tue, Tues
+     - Wednesday, Wed, Weds
+     - Thursday, Thu, Thurs
+     - Friday, Fri
+     - Saturday, Sat
+     - Sunday, Sun
+   - Also accept "tomorrow", "tom", and "next [weekday]".
+   - Always resolve the weekday to the **next future occurrence**.
+     - Example: If today is Wednesday and input is "Tuesday", return next Tuesday.
+   - Examples:
+     - "tues 6 to 9" → next Tuesday 6 AM to 9 AM
+     - "weds 3-5" → next Wednesday 3 AM to 5 AM
+     - "tom 10 to 2" → tomorrow 10 AM to 2 PM
 
 Constraints:
 
 - DO NOT return any extra text, explanations, or timezone information.
-- DO NOT return a time that is earlier than the current time.
+- DO NOT EVER return a time that is earlier than the current time. This must be maintained for both the start time and end time of a range.
 - Use the current date and time: {current_time} (U.S. Central Time) as a reference.
 - If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
 - If this doesn't help, return "ERROR."
