@@ -84,13 +84,12 @@ Interpretation Rules:
        - "sat morning to noon" → next Saturday 08:00 to 12:00
 
 7. Unsupported or Vague Expressions:
+   - If the time range spans more than one calendar year, return "ERROR".
+      - Example: "12/31/2025 to 01/01/2026" → ERROR
    - If the input contains vague or open-ended terms such as "forever", "until further notice", "as long as needed", or "whenever", return "ERROR".
-   - Example: "Friday 10am to forever" → ERROR
+      - Example: "Friday 10am to forever" → ERROR
 
 Constraints:
-
-- - If the time range spans more than one calendar year, return "ERROR".
-   - Example: "12/31/2025 to 01/01/2026" → ERROR
 - DO NOT return any extra text, explanations, or timezone information.
 - DO NOT EVER return a time that is earlier than the current time. This must be maintained for both the start time and end time of a range.
 - Use the current date and time: {current_time} (U.S. Central Time) as a reference.
