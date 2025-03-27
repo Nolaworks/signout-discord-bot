@@ -61,7 +61,7 @@ Constraints:
 - If this doesn't help, return "ERROR."
 
 Now process: {time_str}
-    """
+"""
 
 
     response = await openai_client.chat.completions.create(
