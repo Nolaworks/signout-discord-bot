@@ -1,30 +1,8 @@
-### admin_panel.py (refactored)
-
-import json
-import os
 import discord
 from gptparse import parse_time_with_gpt
 from discord import app_commands
 from discord.ext import commands
-from utils import extract_tool_from_channel
-
-TOOLS_FILE = "tools.json"
-SETTINGS_FILE = "settings.json"
-
-def load_tools():
-    if os.path.exists(TOOLS_FILE):
-        with open(TOOLS_FILE, "r") as f:
-            return json.load(f)
-    return {"tools": {}}
-
-def save_tools(data):
-    with open(TOOLS_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-def is_admin(interaction):
-    admin_roles = {"Admin", "Moderator", "Board Member"}
-    print(f"User: {interaction.user.name}, Roles: {[role.name for role in interaction.user.roles]}")
-    return any(role.name in admin_roles for role in interaction.user.roles)
+from utils import extract_tool_from_channel, load_tools, save_tools, user_is_admin
 
 class AdminPanel(commands.Cog):
     def __init__(self, bot):
@@ -36,7 +14,7 @@ class AdminPanel(commands.Cog):
         if not tool or tool not in data["tools"] or not data["tools"][tool].get("reservations"):
             return []
 
-        if is_admin(interaction):
+        if user_is_admin(interaction.user):
             filtered_reservations = data["tools"][tool]["reservations"]
         else:
             filtered_reservations = [
@@ -51,7 +29,7 @@ class AdminPanel(commands.Cog):
     @app_commands.command(name="addtool", description="Admin: Add a tool manually")
     @app_commands.describe(tool="Tool name")
     async def add_tool(self, interaction, tool: str):
-        if not is_admin(interaction):
+        if not user_is_admin(interaction.user):
             await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
             return
         data = load_tools()
@@ -65,7 +43,7 @@ class AdminPanel(commands.Cog):
     @app_commands.command(name="removetool", description="Admin: Remove a tool")
     @app_commands.describe(tool="Tool name")
     async def remove_tool(self, interaction, tool: str):
-        if not is_admin(interaction):
+        if not user_is_admin(interaction.user):
             await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
             return
         data = load_tools()
@@ -82,6 +60,7 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
+
         data = load_tools()
         if tool not in data["tools"]:
             await interaction.response.send_message(f"Tool '{tool}' does not exist.", ephemeral=True)
@@ -89,7 +68,7 @@ class AdminPanel(commands.Cog):
 
         reservations = data["tools"][tool].get("reservations", [])
 
-        if not is_admin(interaction) and user.lower() != interaction.user.name.lower():
+        if not user_is_admin(interaction.user) and user.lower() != interaction.user.name.lower():
             await interaction.response.send_message(
                 "You can only modify your own reservations. Contact a shop leader if you need assistance.",
                 ephemeral=True
@@ -125,15 +104,16 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
-        if not is_admin(interaction):
+        if not user_is_admin(interaction.user):
             await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
             return
+
         data = load_tools()
         if tool in data["tools"]:
             if not isinstance(data["tools"][tool], dict):
-                data["tools"][tool] = {"reservations": [], "max_time_hours": hours}
+                data["tools"][tool] = {"reservations": [], "max_time": hours}
             else:
-                data["tools"][tool]["max_time_hours"] = hours
+                data["tools"][tool]["max_time"] = hours
             save_tools(data)
             await interaction.response.send_message(f"Maximum signout time for {tool} set to {hours} hours.")
         else:
@@ -145,9 +125,10 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
-        if not is_admin(interaction):
+        if not user_is_admin(interaction.user):
             await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
             return
+
         data = load_tools()
         if tool in data["tools"] and data["tools"][tool]["reservations"]:
             data["tools"][tool]["reservations"].pop(0)
@@ -162,9 +143,10 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
-        if not is_admin(interaction):
+        if not user_is_admin(interaction.user):
             await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
             return
+
         data = load_tools()
         if tool in data["tools"]:
             data["tools"][tool]["reservations"] = []
