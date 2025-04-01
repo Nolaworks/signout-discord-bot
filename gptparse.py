@@ -89,6 +89,8 @@ Interpretation Rules:
 7. Unsupported or Vague Expressions:
    - If the input contains vague or open-ended terms such as "forever", "until further notice", "as long as needed", or "whenever", return "ERROR".
       - Example: "Friday 10am to forever" → ERROR
+   - If it is a single time and not a range return "ERROR"
+      - Example: "8am" or "Thursday 10am" → ERROR
 
 Constraints:
 - DO NOT return any extra text, explanations, or timezone information.
