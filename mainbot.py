@@ -143,7 +143,7 @@ async def on_message(message):
 
     # Check if the channel starts with "signout-"
     if message.channel.name.startswith("signout-") and not message.content.startswith("/"):
-        await message.channel.send(f"{message.author.mention}, Only slash commands are allowed for now. Try /signout.", delete_after=10)
+        await message.channel.send(f"{message.author.mention}, To help everyone get used to the new setup, only slash commands are allowed for now. Try /signout.", delete_after=10)
         await asyncio.sleep(5)
         await message.delete()
 
@@ -200,7 +200,7 @@ async def signout(interaction: discord.Interaction, time: str):
     formatted_time = await parse_time_with_gpt(time)
 
     if not formatted_time:
-        await interaction.followup.send("I couldn't understand what you meant. Try it again, this time being a little more specific.", ephemeral=True)
+        await interaction.followup.send("I couldn't understand what you meant. Try it again, this time being a little more specific. Make sure your input is a range like 'friday 2pm-3'", ephemeral=True)
         return
 
     max_time_hours = data["tools"][tool].get("max_time_hours", 12)
@@ -212,7 +212,7 @@ async def signout(interaction: discord.Interaction, time: str):
         end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
     else:
         start_time = datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M")
-        end_time = start_time  # No explicit end time, assume single-time reservation
+        end_time = start_time  # No explicit end time, assume single-time reservation. THIS LOGIC IS CURRENTLY DISABLED BY AI PROMPT
 
     # Check if reservation exceeds max allowed time for this tool
     max_duration = datetime.timedelta(hours=max_time_hours)
