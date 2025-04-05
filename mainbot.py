@@ -120,7 +120,7 @@ async def signout(interaction: discord.Interaction, time: str):
     if tool not in data["tools"]:
         data["tools"][tool] = {"max_time": 168, "reservations": []}
         save_tools(data)
-        logging.info(f"Auto-created tool {tool} in tools.json.")
+        logging.info(f"Auto-created tool {tool} in tools.json!")
 
     formatted_time = await parse_time_with_gpt(time)
 
