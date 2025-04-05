@@ -160,7 +160,7 @@ async def signout(interaction: discord.Interaction, time: str):
 
     data["tools"][tool]["reservations"].append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
-    await interaction.followup.send(f"Signed out -- {time} -- by {interaction.user.name}! -- {formatted_time}")
+    await interaction.followup.send(f"Signed out **{time}** by {interaction.user.name}! -- {formatted_time}")
 
 @bot.tree.command(name="returntool", description="Return a tool")
 async def tool_return(interaction: discord.Interaction):
