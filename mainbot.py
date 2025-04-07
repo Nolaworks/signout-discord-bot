@@ -162,20 +162,44 @@ async def signout(interaction: discord.Interaction, time: str):
     save_tools(data)
     await interaction.followup.send(f"Signed out **{time}** by {interaction.user.name}! -- {formatted_time}")
 
+
+async def reservation_autocomplete(interaction: discord.Interaction, current: str):
+    data = load_tools()
+    tool = extract_tool_from_channel(interaction.channel)
+
+    if not tool or tool not in data["tools"]:
+        return []
+
+    all_reservations = data["tools"][tool].get("reservations", [])
+    matching = [
+        r for r in all_reservations
+        if r["user"].lower() == interaction.user.name.lower() and current.lower() in r["time"].lower()
+    ]
+
+    return [
+        app_commands.Choice(name=f"{r['user']} - {r['time']}", value=r["time"])
+        for r in matching
+    ][:25]
+
 @bot.tree.command(name="returntool", description="Return a tool")
-async def tool_return(interaction: discord.Interaction):
+@app_commands.describe(reservation="Select a reservation to return")
+@app_commands.autocomplete(reservation=reservation_autocomplete)
+async def tool_return(interaction: discord.Interaction, reservation: str):
     tool = extract_tool_from_channel(interaction.channel)
     if not tool:
         await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
         return
 
     data = load_tools()
-    if tool in data["tools"] and data["tools"][tool]["reservations"]:
-        data["tools"][tool]["reservations"].pop(0)
-        save_tools(data)
-        await interaction.response.send_message(f"{tool} has been returned.")
-    else:
-        await interaction.response.send_message(f"No active reservations for {tool}.", ephemeral=True)
+    if tool in data["tools"]:
+        reservations = data["tools"][tool].get("reservations", [])
+        for r in reservations:
+            if r["time"] == reservation and r["user"].lower() == interaction.user.name.lower():
+                reservations.remove(r)
+                save_tools(data)
+                await interaction.response.send_message(f"{tool} has been returned.")
+                return
+    await interaction.response.send_message(f"No active reservation matching '{reservation}' for {tool}.", ephemeral=True)
 
 @bot.event
 async def on_guild_channel_create(channel):
@@ -191,7 +215,6 @@ async def on_guild_channel_create(channel):
         bot_channel = discord.utils.get(channel.guild.text_channels, name=channel.name)
         if bot_channel:
             await bot_channel.send(f"Tool '{tool_name}' has been added for reservations.")
-
 @bot.event
 async def on_ready():
     try:
