@@ -81,7 +81,7 @@ class AdminPanel(commands.Cog):
                     reservations.remove(res)
                     save_tools(data)
                     await interaction.response.send_message(
-                        f"❌ Reservation for **{tool}** at `{old_time}` has been **canceled**.", ephemeral=True
+                        f"❌ Reservation for **{tool}** at `{old_time}` has been **canceled**.", ephemeral=False
                     )
                     return
                 formatted_time = await parse_time_with_gpt(new_time)

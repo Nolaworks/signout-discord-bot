@@ -18,89 +18,185 @@ async def parse_time_with_gpt(time_str):
     current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
 
     prompt = f"""
+
 You are a time expression parser. Convert the following time expression into a standard format:
 
-- All times will be either present or future.
-- If it's a single time, return (MM-DD-YYYY HH:MM).
-- If it's a time range, return (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM).
+All times will be either present or future.
+
+- If it's a single time, return: (MM-DD-YYYY HH:MM)
+- If it's a time range, return: (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM)
+
+---
 
 Interpretation Rules:
 
-1. Hour Ranges:
-   - Formats like "H to H", "H until H", or "H-H" (e.g., "3 to 5", "3-5"):
-     - Treated as the next available time window.
-     - If the second hour is smaller than the first, it wraps to the next day.
-     - Examples:
-       - "10 to 2" → 10 PM today to 2 AM tomorrow
-       - "6-10" → 6 AM to 10 AM
+1. **Accepted Range Connectors**
 
-2. Date Ranges:
-   - Formats like "MM/DD to MM/DD", "M/D - M/DD", or "MM/DD/YYYY to MM/DD/YYYY":
-     - Interpreted as a time range starting at 00:00 of the first day and ending at 23:59 of the last day.
-     - This includes ranges that span **multiple years**.
-     - Examples:
-       - "03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59
-       - "12/31/2025 to 01/01/2026" → 12-31-2025 00:00 to 01-01-2026 23:59
+Interpret the following as equivalent: "to", "until", "til", "till", "untill", and "-".
 
-3. Durations:
-   - Formats like "MM mins", "MM minutes", "H hours", or forms like "32min":
-     - Treated as a range starting now, lasting the specified duration.
-     - Examples:
-       - "30 minutes" → now to now + 30 minutes
-       - "5 hours" → now to now + 5 hours
-       - "32min" or "32 min" → now to now + 32 minutes
+```text
+"3 till 5" → 3 PM to 5 PM
+"now - 4pm" → now to 4 PM
+```
 
-4. Relative Time Words:
-   - "in X minutes" or "in X hours":
-     - Starts X units from now, lasts 1 hour by default unless stated otherwise.
-     - Example: "in 2 hours" → now + 2 hours to now + 3 hours
-   - "later today" or "later tonight":
-     - Starts at the next even hour after now (minimum 1 hour ahead), ends 2 hours later.
-     - If past 10 PM, assume start is 8 AM tomorrow.
+---
 
-5. Day Names and Abbreviations:
-   - Accept full or abbreviated weekday names, including variations:
-     - Monday, Mon
-     - Tuesday, Tue, Tues
-     - Wednesday, Wed, Weds
-     - Thursday, Thu, Thurs
-     - Friday, Fri
-     - Saturday, Sat
-     - Sunday, Sun
-   - Also accept "tomorrow", "tom", and "next [weekday]".
-   - Always resolve the weekday to the **next future occurrence**, even crossing into a new month.
-     - Examples:
-       - If today is Wednesday and input is "Tuesday", return next Tuesday.
-       - "weds 6pm to 8" sent on 03-27-2025 → next Wednesday 6pm to 8pm, which is 04-02-2025
-       - "tues 6 to 9" → next Tuesday 6 AM to 9 AM
-       - "weds 3-5" → next Wednesday 3 AM to 5 AM
-       - "tom 10 to 2" → tomorrow 10 AM to 2 PM
+2. **Hour Ranges**
 
-6. Natural Language Time Keywords:
-   - Recognize common time keywords and convert them to clock times:
-     - "noon" → 12:00
-     - "midnight" → 00:00
-     - "morning" → 08:00 (start), "afternoon" → 13:00, "evening" → 18:00, "night" → 21:00
-     - Examples:
-       - "noon to 5" → 12:00 to 17:00
-       - "midnight to 3" → 00:00 to 03:00
-       - "sat morning to noon" → next Saturday 08:00 to 12:00
+Formats like "H to H", "H until H", "H til H", "H till H", "H untill H", or "H-H":
 
-7. Unsupported or Vague Expressions:
-   - If the input contains vague or open-ended terms such as "forever", "until further notice", "as long as needed", or "whenever", return "ERROR".
-      - Example: "Friday 10am to forever" → ERROR
-   - If it is a single time and not a range return "ERROR"
-      - Example: "8am" or "Thursday 10am" → ERROR
+- Treated as the next available time window.
+- If the second hour is smaller than the first, it wraps to the next day.
 
-Constraints:
-- DO NOT return any extra text, explanations, or timezone information.
-- DO NOT EVER return a time that is earlier than the current time. This must be maintained for both the start time and end time of a range.
-- Use the current date and time: {current_time} (U.S. Central Time) as a reference.
-- If the expression is invalid or ambiguous, use {current_time} to fill in missing parts.
-- If this doesn't help, return "ERROR."
+```text
+"10 to 2" → 10 PM today to 2 AM tomorrow
+"6-10" → 6 AM to 10 AM
+```
 
-Now process: {time_str}
+---
+
+3. **Date Ranges**
+
+Formats like "MM/DD to MM/DD", "M/D - M/DD", or "MM/DD/YYYY to MM/DD/YYYY":
+
+- Start time is 00:00 of the first day.
+- End time is 23:59 of the last day.
+
+```text
+"03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59
+"12/31/2025 to 01/01/2026" → 12-31-2025 00:00 to 01-01-2026 23:59
+```
+
+---
+
+4. **Durations**
+
+Formats like "MM mins", "MM minutes", "H hours", or "32min":
+
+- Treated as a range starting now and lasting the specified duration.
+
+```text
+"30 minutes" → now to now + 30 minutes
+"5 hours" → now to now + 5 hours
+"32min" → now to now + 32 minutes
+```
+
+---
+
+5. **Relative Time Words**
+
+- "in X minutes" or "in X hours" → starts X units from now, ends 1 hour later by default.
+- "later today" or "later tonight" → starts at the next even hour (minimum 1 hour ahead), ends 2 hours later.
+- If current time is past 10 PM, assume start is 8 AM tomorrow.
+
+---
+
+6. **Day Names and Abbreviations**
+
+Accept full or abbreviated weekday names:
+
+```text
+Monday, Mon
+Tuesday, Tue, Tues
+Wednesday, Wed, Weds
+Thursday, Thu, Thurs
+Friday, Fri
+Saturday, Sat
+Sunday, Sun
+```
+
+Also accept "tomorrow", "tom", and "next [weekday]".
+
+Always resolve to the next future occurrence.
+
+```text
+If today is Wednesday and input is "Tuesday" → next Tuesday
+"tues 6 to 9" → next Tuesday 6 AM to 9 AM
+"tom 10 to 2" → tomorrow 10 AM to 2 PM
+```
+
+---
+
+7. **Natural Language Time Keywords**
+
+Convert the following to fixed times:
+
+```text
+"noon" → 12:00
+"midnight" → 00:00
+"morning" → 08:00
+"afternoon" → 13:00
+"evening" → 18:00
+"night" → 21:00
+```
+
+```text
+"noon to 5" → 12:00 to 17:00
+"sat morning to noon" → next Saturday 08:00 to 12:00
+```
+
+---
+
+8. **“Now to [Time]” Format**
+
+For expressions like "now to", "now until", "now til", "now till", "now untill", or "now -":
+
+- Start time is the current time.
+- Infer AM/PM for end time using the next future occurrence.
+- If the end time has already passed today, use that time tomorrow.
+
+```text
+"now to 4" at 3:30 PM → 15:30 today to 16:00 today
+"now to 2" at 3:30 PM → 15:30 today to 02:00 tomorrow
+"now until noon" → now to 12:00 today if in future
+```
+
+---
+
+9. **Same-Day Weekday Ranges**
+
+If the start and end days are the same as today:
+
+- Start = now
+- End = same weekday next week at 23:59
+
+```text
+On Saturday, "Saturday to Saturday" → now to next Saturday 23:59
+```
+
+---
+
+10. **Unsupported or Vague Expressions**
+
+If the expression is vague or open-ended, return "ERROR".
+
+This includes:
+
+```text
+"forever", "until further notice", "as long as needed", "whenever"
+```
+
+Also return "ERROR" if only a single fixed time is provided:
+
+```text
+"8am", "Thursday 10am"
+```
+
+---
+
+**Constraints:**
+
+- DO NOT return any extra text, explanations, or timezone info.
+- DO NOT return a time that is earlier than the current time (start or end).
+- Use this current date and time: {current_time} (U.S. Central Time)
+- If the expression is invalid or ambiguous, use {current_time} to infer missing parts.
+- If that doesn’t help, return "ERROR".
+
+---
+
+Now process: "{time_str}"
 """
+
 
 
 
