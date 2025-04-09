@@ -23,67 +23,59 @@ You are a time expression parser. Convert the following time expression into a s
 
 All times will be either present or future.
 
-- If it's a single time, return: (MM-DD-YYYY HH:MM)
-- If it's a time range, return: (MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM)
+- If it's a single time, return: MM-DD-YYYY HH:MM
+- If it's a time range, return: MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM
 
 ---
 
 Interpretation Rules:
 
-1. **Accepted Range Connectors**
+1. Accepted Range Connectors
 
 Interpret the following as equivalent: "to", "until", "til", "till", "untill", and "-".
 
-```text
-"3 till 5" → 3 PM to 5 PM
+"3 till 5" → 3 PM to 5 PM  
 "now - 4pm" → now to 4 PM
-```
 
 ---
 
-2. **Hour Ranges**
+2. Hour Ranges
 
 Formats like "H to H", "H until H", "H til H", "H till H", "H untill H", or "H-H":
 
 - Treated as the next available time window.
 - If the second hour is smaller than the first, it wraps to the next day.
 
-```text
-"10 to 2" → 10 PM today to 2 AM tomorrow
+"10 to 2" → 10 PM today to 2 AM tomorrow  
 "6-10" → 6 AM to 10 AM
-```
 
 ---
 
-3. **Date Ranges**
+3. Date Ranges
 
 Formats like "MM/DD to MM/DD", "M/D - M/DD", or "MM/DD/YYYY to MM/DD/YYYY":
 
 - Start time is 00:00 of the first day.
 - End time is 23:59 of the last day.
 
-```text
-"03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59
+"03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59  
 "12/31/2025 to 01/01/2026" → 12-31-2025 00:00 to 01-01-2026 23:59
-```
 
 ---
 
-4. **Durations**
+4. Durations
 
 Formats like "MM mins", "MM minutes", "H hours", or "32min":
 
 - Treated as a range starting now and lasting the specified duration.
 
-```text
-"30 minutes" → now to now + 30 minutes
-"5 hours" → now to now + 5 hours
+"30 minutes" → now to now + 30 minutes  
+"5 hours" → now to now + 5 hours  
 "32min" → now to now + 32 minutes
-```
 
 ---
 
-5. **Relative Time Words**
+5. Relative Time Words
 
 - "in X minutes" or "in X hours" → starts X units from now, ends 1 hour later by default.
 - "later today" or "later tonight" → starts at the next even hour (minimum 1 hour ahead), ends 2 hours later.
@@ -91,53 +83,45 @@ Formats like "MM mins", "MM minutes", "H hours", or "32min":
 
 ---
 
-6. **Day Names and Abbreviations**
+6. Day Names and Abbreviations
 
 Accept full or abbreviated weekday names:
 
-```text
-Monday, Mon
-Tuesday, Tue, Tues
-Wednesday, Wed, Weds
-Thursday, Thu, Thurs
-Friday, Fri
-Saturday, Sat
+Monday, Mon  
+Tuesday, Tue, Tues  
+Wednesday, Wed, Weds  
+Thursday, Thu, Thurs  
+Friday, Fri  
+Saturday, Sat  
 Sunday, Sun
-```
 
 Also accept "tomorrow", "tom", and "next [weekday]".
 
 Always resolve to the next future occurrence.
 
-```text
-If today is Wednesday and input is "Tuesday" → next Tuesday
-"tues 6 to 9" → next Tuesday 6 AM to 9 AM
+If today is Wednesday and input is "Tuesday" → next Tuesday  
+"tues 6 to 9" → next Tuesday 6 AM to 9 AM  
 "tom 10 to 2" → tomorrow 10 AM to 2 PM
-```
 
 ---
 
-7. **Natural Language Time Keywords**
+7. Natural Language Time Keywords
 
 Convert the following to fixed times:
 
-```text
-"noon" → 12:00
-"midnight" → 00:00
-"morning" → 08:00
-"afternoon" → 13:00
-"evening" → 18:00
+"noon" → 12:00  
+"midnight" → 00:00  
+"morning" → 08:00  
+"afternoon" → 13:00  
+"evening" → 18:00  
 "night" → 21:00
-```
 
-```text
-"noon to 5" → 12:00 to 17:00
+"noon to 5" → 12:00 to 17:00  
 "sat morning to noon" → next Saturday 08:00 to 12:00
-```
 
 ---
 
-8. **“Now to [Time]” Format**
+8. “Now to [Time]” Format
 
 For expressions like "now to", "now until", "now til", "now till", "now untill", or "now -":
 
@@ -145,46 +129,38 @@ For expressions like "now to", "now until", "now til", "now till", "now untill",
 - Infer AM/PM for end time using the next future occurrence.
 - If the end time has already passed today, use that time tomorrow.
 
-```text
-"now to 4" at 3:30 PM → 15:30 today to 16:00 today
-"now to 2" at 3:30 PM → 15:30 today to 02:00 tomorrow
+"now to 4" at 3:30 PM → 15:30 today to 16:00 today  
+"now to 2" at 3:30 PM → 15:30 today to 02:00 tomorrow  
 "now until noon" → now to 12:00 today if in future
-```
 
 ---
 
-9. **Same-Day Weekday Ranges**
+9. Same-Day Weekday Ranges
 
 If the start and end days are the same as today:
 
 - Start = now
 - End = same weekday next week at 23:59
 
-```text
 On Saturday, "Saturday to Saturday" → now to next Saturday 23:59
-```
 
 ---
 
-10. **Unsupported or Vague Expressions**
+10. Unsupported or Vague Expressions
 
 If the expression is vague or open-ended, return "ERROR".
 
 This includes:
 
-```text
 "forever", "until further notice", "as long as needed", "whenever"
-```
 
 Also return "ERROR" if only a single fixed time is provided:
 
-```text
 "8am", "Thursday 10am"
-```
 
 ---
 
-**Constraints:**
+Constraints:
 
 - DO NOT return any extra text, explanations, or timezone info.
 - DO NOT return a time that is earlier than the current time (start or end).
@@ -195,13 +171,14 @@ Also return "ERROR" if only a single fixed time is provided:
 ---
 
 Now process: "{time_str}"
+
 """
 
 
 
 
     response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o",
         messages=[{"role": "system", "content": prompt}]
     )
 
