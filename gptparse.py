@@ -129,8 +129,10 @@ For expressions like "now to", "now until", "now til", "now till", "now untill",
 - Infer AM/PM for end time using the next future occurrence.
 - If the end time has already passed today, use that time tomorrow.
 
-"now to 4" at 3:30 PM → 15:30 today to 16:00 today  
-"now to 2" at 3:30 PM → 15:30 today to 02:00 tomorrow  
+"now to 4" at 3:30 PM → 15:30 today to 16:00 today
+"now to 4" at 4:30 PM → 4:30 today to 04:00 tomorrow   
+"now to 2" at 3:30 PM → 15:30 today to 02:00 tomorrow
+"now to 2" at 12:30 PM → 12:30 today to 14:00 today   
 "now until noon" → now to 12:00 today if in future
 
 ---
