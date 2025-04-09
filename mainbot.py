@@ -17,7 +17,7 @@ from utils import extract_tool_from_channel, load_tools, save_tools, save_expire
 # Discord Token load
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-displayName = interaction.user.display_name
+#displayName = interaction.user.display_name
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
@@ -208,7 +208,8 @@ async def comment(interaction: discord.Interaction, comment: str):
     if not interaction.channel.name.startswith("signout-"):
         await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
         return
-    await interaction.response.send_message(f"💬 **{displayName}** says: {comment}")
+    display_name = interaction.user.display_name
+    await interaction.response.send_message(f"💬 **{display_name}** says: {comment}")
 
 
 @bot.event
