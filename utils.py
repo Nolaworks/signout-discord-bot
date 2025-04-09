@@ -3,6 +3,8 @@ import json
 import csv
 import datetime
 import logging
+import discord
+from discord import Interaction, app_commands
 
 TOOLS_FILE = "tools.json"
 SETTINGS_FILE = "settings.json"
@@ -43,5 +45,44 @@ def save_expired_to_csv(expired_reservations):
                 datetime.datetime.now().strftime("%m-%d-%Y %H:%M")
             ])
 
+async def user_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        data = load_tools()
+        tool = extract_tool_from_channel(interaction.channel)
+        if not tool or tool not in data["tools"] or not data["tools"][tool].get("reservations"):
+            return []
+
+        usernames = sorted({r["user"] for r in data["tools"][tool]["reservations"]})
+        filtered = [u for u in usernames if current.lower() in u.lower()]
+
+        return [app_commands.Choice(name=u, value=u) for u in filtered][:25]
+
+async def reservation_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        data = load_tools()
+        tool = extract_tool_from_channel(interaction.channel)
+        if not tool or tool not in data["tools"] or not data["tools"][tool].get("reservations"):
+            return []
+
+        # Extract any passed options like "user"
+        options = interaction.data.get("options", [])
+        option_map = {opt["name"]: opt["value"] for opt in options}
+
+        # Determine target user
+        if user_is_admin(interaction.user):
+            # Admins can type in someone else's username
+            target_user = option_map.get("user", interaction.user.name)
+        else:
+            target_user = interaction.user.name
+
+        # Filter just their reservations
+        reservations = data["tools"][tool]["reservations"]
+        filtered = [
+            r for r in reservations
+            if r["user"].lower() == target_user.lower() and current.lower() in r["time"].lower()
+        ]
+
+        return [
+            app_commands.Choice(name=f"{r['user']} - {r['time']}", value=r["time"])
+            for r in filtered
+        ][:25]
 def user_is_admin(user):
     return any(role.name in ADMIN_ROLES for role in getattr(user, "roles", []))

@@ -161,7 +161,7 @@ async def signout(interaction: discord.Interaction, time: str):
 
     data["tools"][tool]["reservations"].append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
-    await interaction.followup.send(f"Signed out **{time}** by {interaction.user.name}! -- {formatted_time}")
+    await interaction.followup.send(f"Signed out **{time}** by {interaction.user.display_name}! -- {formatted_time}")
 
 
 async def reservation_autocomplete(interaction: discord.Interaction, current: str):
