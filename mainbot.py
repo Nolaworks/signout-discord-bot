@@ -201,6 +201,16 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
                 return
     await interaction.response.send_message(f"No active reservation matching '{reservation}' for {tool}.", ephemeral=True)
 
+@bot.tree.command(name="comment", description="Leave a comment in this channel")
+@app_commands.describe(comment="Your comment")
+async def comment(interaction: discord.Interaction, comment: str):
+    if not interaction.channel.name.startswith("signout-"):
+        await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
+        return
+    display_name = interaction.user.display_name
+    await interaction.response.send_message(f"💬 **{display_name}** says: {comment}")
+
+
 @bot.event
 async def on_guild_channel_create(channel):
     if isinstance(channel, discord.TextChannel) and channel.name.startswith("signout-"):
