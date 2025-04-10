@@ -13,9 +13,9 @@ class AdminPanel(commands.Cog):
     @is_admin_check()
     @app_commands.describe(tool="Tool name")
     async def add_tool(self, interaction, tool: str):
-        if not user_is_admin(interaction.user):
-            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
-            return
+        #if not user_is_admin(interaction.user):
+         #   await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+          #  return
         data = load_tools()
         if tool in data["tools"]:
             await interaction.response.send_message(f"Tool {tool} already exists.", ephemeral=True)
@@ -28,9 +28,9 @@ class AdminPanel(commands.Cog):
     @is_admin_check()
     @app_commands.describe(tool="Tool name")
     async def remove_tool(self, interaction, tool: str):
-        if not user_is_admin(interaction.user):
-            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
-            return
+        #if not user_is_admin(interaction.user):
+         #   await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+          #  return
         data = load_tools()
         if tool in data["tools"]:
             del data["tools"][tool]
@@ -109,9 +109,9 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
-        if not user_is_admin(interaction.user):
-            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
-            return
+        #if not user_is_admin(interaction.user):
+         #   await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+          #  return
 
         data = load_tools()
         if tool in data["tools"]:
@@ -131,9 +131,9 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
-        if not user_is_admin(interaction.user):
-            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
-            return
+       # if not user_is_admin(interaction.user):
+        #    await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+         #   return
 
         data = load_tools()
         if tool in data["tools"] and data["tools"][tool]["reservations"]:
@@ -150,9 +150,9 @@ class AdminPanel(commands.Cog):
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
             return
-        if not user_is_admin(interaction.user):
-            await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
-            return
+        #if not user_is_admin(interaction.user):
+         #   await interaction.response.send_message("🚫 You don't have permission to use this command.", ephemeral=True)
+          #  return
 
         data = load_tools()
         if tool in data["tools"]:
@@ -171,11 +171,9 @@ class AdminPanel(commands.Cog):
     async def user_autocomplete_handler(self, interaction: discord.Interaction, current: str):
         return await user_autocomplete(interaction, current)
     
-    @adjust_time_admin.error
-    async def adjusttime_admin_error(self, interaction: discord.Interaction, error):
+    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.CheckFailure):
-            await interaction.response.send_message(
-                "🚫 NOT FOR U!", ephemeral=True)
+            await interaction.response.send_message("🚫 NOT FOR U!💩", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(AdminPanel(bot))
