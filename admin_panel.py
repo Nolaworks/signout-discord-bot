@@ -2,14 +2,15 @@ import discord
 from gptparse import parse_time_with_gpt
 from discord import app_commands
 from discord.ext import commands
-from utils import extract_tool_from_channel, load_tools, save_tools, user_is_admin, reservation_autocomplete, user_autocomplete
+from utils import *
 from typing import Optional
 
 class AdminPanel(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
+    
     @app_commands.command(name="addtool", description="Admin: Add a tool manually")
+    @is_admin_check()
     @app_commands.describe(tool="Tool name")
     async def add_tool(self, interaction, tool: str):
         if not user_is_admin(interaction.user):
@@ -24,6 +25,7 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(f"Tool {tool} has been added.")
 
     @app_commands.command(name="removetool", description="Admin: Remove a tool")
+    @is_admin_check()
     @app_commands.describe(tool="Tool name")
     async def remove_tool(self, interaction, tool: str):
         if not user_is_admin(interaction.user):
@@ -47,6 +49,7 @@ class AdminPanel(commands.Cog):
 
     # For admins — shows user field
     @app_commands.command(name="adjusttime_admin", description="Admin: Adjust or cancel someone else's reservation time.")
+    @is_admin_check()
     @app_commands.describe(user="Username of the person whose reservation you're adjusting",
                         old_time="Original reservation time", new_time="New time or 'cancel'")
     async def adjust_time_admin(self, interaction: discord.Interaction, user: str, old_time: str, new_time: str):
@@ -90,7 +93,7 @@ class AdminPanel(commands.Cog):
                 res["time"] = formatted_time
                 save_tools(data)
                 await interaction.response.send_message(
-                    f"✔️ Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.", ephemeral=True
+                    f"✔️ Reservation for **{tool}** updated:\n**Old Time:** {old_time}\n**New Time:** {formatted_time}.", ephemeral=False
                 )
                 return
 
@@ -99,6 +102,7 @@ class AdminPanel(commands.Cog):
 
 
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
+    @is_admin_check()
     @app_commands.describe(hours="Max sign-out duration in hours")
     async def set_max_time(self, interaction, hours: int):
         tool = extract_tool_from_channel(interaction.channel)
@@ -121,6 +125,7 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
     @app_commands.command(name="forcereturn", description="Admin: Force return a tool")
+    @is_admin_check()
     async def force_return(self, interaction):
         tool = extract_tool_from_channel(interaction.channel)
         if not tool:
@@ -139,6 +144,7 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(f"No active reservations for {tool}.", ephemeral=True)
 
     @app_commands.command(name="clearreservations", description="Admin: Clear all reservations for a tool")
+    @is_admin_check()
     async def clear_reservations(self, interaction):
         tool = extract_tool_from_channel(interaction.channel)
         if not tool:
@@ -164,6 +170,12 @@ class AdminPanel(commands.Cog):
     @adjust_time_admin.autocomplete("user")
     async def user_autocomplete_handler(self, interaction: discord.Interaction, current: str):
         return await user_autocomplete(interaction, current)
+    
+    @adjust_time_admin.error
+    async def adjusttime_admin_error(self, interaction: discord.Interaction, error):
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message(
+                "🚫 NOT FOR U!", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(AdminPanel(bot))

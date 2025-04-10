@@ -84,5 +84,10 @@ async def reservation_autocomplete(interaction: discord.Interaction, current: st
             app_commands.Choice(name=f"{r['user']} - {r['time']}", value=r["time"])
             for r in filtered
         ][:25]
+def is_admin_check():
+        async def predicate(interaction: discord.Interaction) -> bool:
+            return user_is_admin(interaction.user)
+        return app_commands.check(predicate)
+
 def user_is_admin(user):
     return any(role.name in ADMIN_ROLES for role in getattr(user, "roles", []))
