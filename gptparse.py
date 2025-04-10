@@ -126,9 +126,11 @@ Convert the following to fixed times:
 For expressions like "now to", "now until", "now til", "now till", "now untill", or "now -":
 
 - Start time is the current time.
-- Infer AM/PM for end time using the next future occurrence.
-- If the end time has already passed today, use that time tomorrow.
+- If the time is written as a single digit (e.g., “2”, “3”, etc.) 
+  and it is ambiguous (no AM/PM), infer it as PM by default if current time is earlier than 12:00PM in the day.
+- Times without AM/PM should be interpreted as the nearest future time.
 
+"now to 2” at 6:00 AM → 06:00 to 14:00 today"
 "now to 4" at 3:30 PM → 15:30 today to 16:00 today
 "now to 4" at 4:30 PM → 4:30 today to 04:00 tomorrow   
 "now to 2" at 3:30 PM → 15:30 today to 02:00 tomorrow
