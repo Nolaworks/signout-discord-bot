@@ -82,6 +82,70 @@ async def on_message(message):
         await message.channel.send(f"{message.author.mention}, To help everyone get used to the new setup, only slash commands are allowed for now. Try /signout.", delete_after=10)
         await asyncio.sleep(5)
         await message.delete()
+@bot.tree.command(name="help", description="How to use the signout system")
+async def help_cmd(interaction: discord.Interaction):
+    ch = interaction.channel
+    in_signout_ch = hasattr(ch, "name") and isinstance(ch.name, str) and ch.name.startswith("signout-")
+    tool = extract_tool_from_channel(ch) if in_signout_ch else None
+    data = load_tools()
+    trec = data["tools"].get(tool, {"max_time": 168, "reservations": []}) if tool else {"max_time": 168}
+
+    is_tool_room = False
+    cat = getattr(ch, "category", None)
+    if getattr(cat, "name", None) == "Tool Room":
+        is_tool_room = True
+
+    lines = []
+
+    if in_signout_ch:
+        lines.append(f"**Channel:** `#{ch.name}`  |  **Tool:** `{tool}`  |  **Max time:** `{trec.get('max_time', 168)}h`")
+        if is_tool_room:
+            lines.append("**Tool Room rule:** A photo is required for signout and return.")
+    else:
+        lines.append("Use these commands inside a `#signout-<tool>` channel for tool-specific actions.")
+
+    # User commands
+    lines.append("\n**User commands**")
+    lines.append("• `/signout time:<text> [photo]`  Reserve the tool for a time range.")
+    if is_tool_room:
+        lines.append("  - Photo is required here. Attach a picture of the tool at signout.")
+    lines.append("  - Examples: `now for 2 hours`, `3pm to 5pm`, `tomorrow 10:00-12:00`.")
+    lines.append("  - The parser normalizes your input to `MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM`.")
+
+    lines.append("• `/reservations`  List active reservations for this tool.")
+
+    lines.append("• `/returntool reservation:<pick> [photo]`  Return your reservation.")
+    if is_tool_room:
+        lines.append("  - Photo is required here. Attach a picture of the tool at return.")
+    lines.append("  - Start typing to autocomplete your reservation time.")
+
+    lines.append("• `/comment comment:<text>`  Post a note to this channel.")
+
+    # Behavior and conflicts
+    lines.append("\n**Rules and behavior**")
+    lines.append("• Only slash commands are permitted in signout channels.")
+    lines.append("• Reservations must be a range and must not overlap existing reservations.")
+    lines.append("• If your request exceeds the max time for the tool, it is rejected.")
+    lines.append("• Expired reservations are auto-removed and logged to history.")
+
+    # Admin commands (shown to admins only)
+    if user_is_admin(interaction.user):
+        lines.append("\n**Admin commands**")
+        lines.append("• `/adjusttime old_time:<text> choice:<start|end|range> new_value:<text> [merge]`  Edit your reservation.")
+        lines.append("• `/adjusttime_admin user:<name> old_time:<text> choice:<start|end|range> new_value:<text> [merge]`  Edit another user.")
+        lines.append("• `/maxtime hours:<int>`  Set max hours for this tool.")
+        lines.append("• `/forcereturn`  Force return the current reservation.")
+        lines.append("• `/clearreservations`  Remove all reservations for this tool.")
+
+    # If not in a signout channel, add a quick start
+    if not in_signout_ch:
+        lines.append("\n**Quick start**")
+        lines.append("1) Go to a `#signout-<tool>` channel.")
+        lines.append("2) Run `/signout time:<range>` and attach a photo if you are in Tool Room.")
+        lines.append("3) When done, run `/returntool` and attach a photo if you are in Tool Room.")
+
+    await interaction.response.send_message("\n".join(lines))
+
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
 async def reservations(interaction: discord.Interaction):
@@ -174,9 +238,18 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
 
     data["tools"][tool]["reservations"].append({"user": interaction.user.name, "time": formatted_time})
     save_tools(data)
-    await interaction.followup.send(f"Signed out **{time}** by {interaction.user.display_name}! -- {formatted_time}")
+    files = []
+    if photo is not None:
+        try:
+            files = [await photo.to_file(use_cached=True)]
+        except Exception:
+            pass  # ignore attach failure; reservation already saved
 
-
+    await interaction.followup.send(
+        f"Signed out **{tool}** for **{time}** by {interaction.user.display_name} — `{formatted_time}`",
+        files=files or None,
+    )
+    
 async def reservation_autocomplete(interaction: discord.Interaction, current: str):
     data = load_tools()
     tool = extract_tool_from_channel(interaction.channel)
@@ -221,7 +294,17 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
             if r["time"] == reservation and r["user"].lower() == interaction.user.name.lower():
                 reservations.remove(r)
                 save_tools(data)
-                await interaction.response.send_message(f"{tool} has been returned.")
+                files = []
+                if photo is not None:
+                    try:
+                        files = [await photo.to_file(use_cached=True)]
+                    except Exception:
+                        pass
+
+                await interaction.response.send_message(
+                    f"{interaction.user.display_name} returned **{tool}** — `{reservation}`",
+                    files=files or None,
+                )
                 return
     await interaction.response.send_message(f"No active reservation matching '{reservation}' for {tool}.", ephemeral=True)
 
