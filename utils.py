@@ -91,3 +91,9 @@ def is_admin_check():
 
 def user_is_admin(user):
     return any(role.name in ADMIN_ROLES for role in getattr(user, "roles", []))
+
+def in_tool_room(category) -> bool:
+    try:
+        return bool(category and getattr(category, "name", None) == "Tool Room")
+    except Exception:
+        return False

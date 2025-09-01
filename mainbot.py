@@ -11,8 +11,9 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from admin_panel import AdminPanel
+from typing import Optional
 from gptparse import parse_time_with_gpt
-from utils import extract_tool_from_channel, load_tools, save_tools, save_expired_to_csv, user_is_admin
+from utils import extract_tool_from_channel, load_tools, save_tools, save_expired_to_csv, user_is_admin, in_tool_room
 
 # Discord Token load
 load_dotenv()
@@ -107,8 +108,20 @@ async def reservations(interaction: discord.Interaction):
 
     await interaction.followup.send(f"📌 **Reservations for `{tool}`:**\n{reservations_list}")
 
-@bot.tree.command(name="signout", description="Sign out a tool at a specific time")
-async def signout(interaction: discord.Interaction, time: str):
+@bot.tree.command(name="signout", description="Sign out a tool for a time range")
+@app_commands.describe(
+    time="Example: 'now for 2 hours' or '3pm to 5pm'",
+    photo="Required in Tool Room: photo of the tool at signout")
+async def signout(interaction: discord.Interaction, time: str, photo: discord.Attachment | None = None):
+    # Require photo only in Tool Room
+    cat = getattr(interaction.channel, "category", None)
+    if getattr(cat, "name", None) == "Tool Room":
+        if photo is None or not getattr(photo, "content_type", "") or not photo.content_type.startswith("image/"):
+            await interaction.response.send_message(
+                "Photo required in Tool Room. Upload an image of the tool with this command.",
+                ephemeral=True,
+            )
+            return
     tool = extract_tool_from_channel(interaction.channel)
     if not tool:
         await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
@@ -182,10 +195,20 @@ async def reservation_autocomplete(interaction: discord.Interaction, current: st
         for r in matching
     ][:25]
 
-@bot.tree.command(name="returntool", description="Return a tool")
-@app_commands.describe(reservation="Select a reservation to return")
+@bot.tree.command(name="returntool", description="Return the currently signed-out tool")
+@app_commands.describe(
+    photo="Required in Tool Room: photo of the tool at return")
 @app_commands.autocomplete(reservation=reservation_autocomplete)
-async def tool_return(interaction: discord.Interaction, reservation: str):
+async def tool_return(interaction: discord.Interaction, reservation: str, photo: discord.Attachment | None = None):
+    cat = getattr(interaction.channel, "category", None)
+    if getattr(cat, "name", None) == "Tool Room":
+        if photo is None or not getattr(photo, "content_type", "") or not photo.content_type.startswith("image/"):
+            await interaction.response.send_message(
+                "Photo required in Tool Room. Upload an image of the tool with this command.",
+                ephemeral=True,
+            )
+            return
+
     tool = extract_tool_from_channel(interaction.channel)
     if not tool:
         await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
