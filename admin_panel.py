@@ -56,39 +56,41 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
 
     # ---------- Adjust time (user) ----------
-    @app_commands.command(name="adjusttime",  description="Adjust your reservation: change start, end, or range. Use 'cancel' to remove.")
+    @app_commands.command(name="adjusttime", description="Adjust your reservation: change start, end, or range. Use 'cancel' to remove.")
     @app_commands.describe(
-        old_time="Your existing reservation time, exactly as shown",
-        choice="What to change",
-        new_value="New time phrase, e.g. '10:30am', '3pm', 'today 10:00-12:00', or 'cancel'"
+        old_time="Existing reservation time",
+        choice="Part to change",
+        new_value="New time or 'cancel'",
+        merge="Merge if it overlaps your own reservation"
     )
     @app_commands.choices(choice=[
         app_commands.Choice(name="start", value="start"),
         app_commands.Choice(name="end",   value="end"),
         app_commands.Choice(name="range", value="range"),
     ])
-    async def adjust_time(self, interaction: discord.Interaction, old_time: str, choice: app_commands.Choice[str], new_value: str):
-        await self._adjust_time_core(interaction, old_time, choice.value, new_value)
+    async def adjust_time(self, interaction: discord.Interaction, old_time: str, choice: app_commands.Choice[str], new_value: str, merge: bool = False):
+        await self._adjust_time_core(interaction, old_time, choice.value, new_value, merge=merge)
 
     # ---------- Adjust time (admin) ----------
     @app_commands.command(name="adjusttime_admin", description="Admin: Adjust another user's reservation. Use 'cancel' to remove.")
     @is_admin_check()
     @app_commands.describe(
-        user="Username of the person whose reservation you're adjusting",
-        old_time="Existing reservation time, exactly as shown",
-        choice="What to change",
-        new_value="New time phrase, e.g. '10:30am', '3pm', 'today 10:00-12:00', or 'cancel'"
+        user="Target username",
+        old_time="Existing reservation time",
+        choice="Part to change",
+        new_value="New time or 'cancel'",
+        merge="Merge if it overlaps their own reservation"
     )
     @app_commands.choices(choice=[
         app_commands.Choice(name="start", value="start"),
         app_commands.Choice(name="end",   value="end"),
         app_commands.Choice(name="range", value="range"),
     ])
-    async def adjust_time_admin(self, interaction: discord.Interaction, user: str, old_time: str, choice: app_commands.Choice[str], new_value: str):
-        await self._adjust_time_core(interaction, old_time, choice.value, new_value, user=user)
+    async def adjust_time_admin(self, interaction: discord.Interaction, user: str, old_time: str, choice: app_commands.Choice[str], new_value: str, merge: bool = False):
+        await self._adjust_time_core(interaction, old_time, choice.value, new_value, user=user, merge=merge)
 
     # ---------- Shared core ----------
-    async def _adjust_time_core(self, interaction: discord.Interaction, old_time: str, choice: str, new_value: str, user: Optional[str] = None):
+    async def _adjust_time_core(self, interaction: discord.Interaction, old_time: str, choice: str, new_value: str, user: Optional[str] = None, merge: bool = False):
         tool = extract_tool_from_channel(interaction.channel)
         if not tool:
             await interaction.response.send_message("This command must be used in a 'signout-[tool]' channel.", ephemeral=True)
@@ -133,7 +135,7 @@ class AdminPanel(commands.Cog):
             )
             return
 
-        # Rewrite using original text (fallback to current canonical time string)
+        # Base text for rewrite
         base_text = res.get("time") if choice in ("start", "end") else (res.get("original_text") or res.get("time"))
 
         try:
@@ -153,7 +155,9 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message("Invalid interval. End must be after start.", ephemeral=True)
             return
 
-        # Conflict check against other reservations on same tool
+        # Conflict check
+        conflicts_other = []
+        conflicts_self = []
         for j, other in enumerate(reservations):
             if j == idx or not isinstance(other, dict):
                 continue
@@ -162,10 +166,44 @@ class AdminPanel(commands.Cog):
             except Exception:
                 continue
             if _overlaps(ns, ne, os_, oe_):
-                await interaction.response.send_message(
-                    f"Conflict with existing reservation: `{_fmt(os_)}` to `{_fmt(oe_)}`.", ephemeral=True
-                )
-                return
+                if other.get("user", "").lower() == target_user.lower():
+                    conflicts_self.append((j, os_, oe_))
+                else:
+                    conflicts_other.append((j, os_, oe_))
+
+        if conflicts_other:
+            os_, oe_ = conflicts_other[0][1], conflicts_other[0][2]
+            await interaction.response.send_message(
+                f"Conflict with another reservation: `{_fmt(os_)}` to `{_fmt(oe_)}`.",
+                ephemeral=True
+            )
+            return
+
+        if conflicts_self and not merge:
+            os_, oe_ = conflicts_self[0][1], conflicts_self[0][2]
+            await interaction.response.send_message(
+                f"Conflict with your reservation `{_fmt(os_)}` to `{_fmt(oe_)}`. Re-run with `merge: true` to combine.",
+                ephemeral=True
+            )
+            return
+
+        # Merge self-conflicts if requested
+        if conflicts_self and merge:
+            new_start = ns
+            new_end = ne
+            for _, s_, e_ in conflicts_self:
+                if s_ < new_start:
+                    new_start = s_
+                if e_ > new_end:
+                    new_end = e_
+            ns, ne = new_start, new_end
+            new_range = f"{_fmt(ns)} to {_fmt(ne)}"
+            # Remove other self reservations; adjust idx after pops
+            to_remove = sorted([j for j, _, _ in conflicts_self if j != idx], reverse=True)
+            for j in to_remove:
+                reservations.pop(j)
+                if j < idx:
+                    idx -= 1  # keep idx pointing to the same logical record
 
         # Persist
         res["time"] = new_range
@@ -180,7 +218,8 @@ class AdminPanel(commands.Cog):
         save_tools(data)
 
         await interaction.response.send_message(
-            f"✔️ Reservation for **{tool}** updated:\n**Old:** `{old_time}`\n**New:** `{new_range}`", ephemeral=False
+            f"✔️ Reservation for **{tool}** updated:\n**Old:** `{old_time}`\n**New:** `{new_range}`",
+            ephemeral=False
         )
 
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
