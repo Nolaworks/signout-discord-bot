@@ -205,3 +205,35 @@ Now process: "{time_str}"
         except ValueError:
             logging.error(f"Malformed time from OpenAI: {formatted_time}")
         return None
+    
+
+async def rewrite_reservation_with_gpt(client: AsyncOpenAI, *, 
+                                       original_text: str,
+                                       choice: str,            # "start"|"end"|"range"
+                                       new_value: str,
+                                       tz_name: str = "America/Chicago") -> str:
+    """
+    Returns a full normalized range 'MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM' in tz_name.
+    The model must output only that line.
+    """
+    sys = f"""You convert and rewrite human time requests into a single normalized range.
+- Timezone: {tz_name}.
+- Output EXACTLY: 'MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM' with 24h minutes.
+- If input is ambiguous, infer the soonest valid future times by default.
+- Never add text besides the one line.
+"""
+    user = f"""Current reservation text (verbatim):
+<<<{original_text}>>>
+
+User wants to change: {choice}
+New value: {new_value}
+
+Task: Rewrite the ENTIRE reservation as one normalized range for the same intent and tool.
+Remember: Output ONLY the final normalized range."""
+    rsp = await client.chat.completions.create(
+        model="gpt-4o-mini",  # your current small model
+        messages=[{"role":"system","content":sys},
+                  {"role":"user","content":user}],
+        temperature=0
+    )
+    return rsp.choices[0].message.content.strip()
