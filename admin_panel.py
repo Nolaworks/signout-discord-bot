@@ -3,13 +3,13 @@ import datetime
 import pytz
 
 import discord
-from gptparse import rewrite_reservation_with_gpt
+from gptparse import rewrite_reservation_with_gpt, parse_time_with_gpt
 from openai import AsyncOpenAI
 from discord import app_commands
 from discord.ext import commands
 
 from utils import *
-from typing import Optional
+from typing import Optional, List
 
 CENTRAL = pytz.timezone("America/Chicago")
 
@@ -274,6 +274,73 @@ class AdminPanel(commands.Cog):
         else:
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
     
+    @app_commands.command(name="adblock", description="Admin: Block multiple tools for a time range")
+    @app_commands.describe(
+    tools="Comma-separated list of tools to block",
+    time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')")
+    @is_admin_check()
+    async def admin_block_all(self, interaction: discord.Interaction, tools: str, time: str):
+        await interaction.response.defer(thinking=True)
+
+        data = load_tools()
+        formatted_time = await parse_time_with_gpt(time)
+
+        if not formatted_time:
+            await interaction.followup.send("Couldn't interpret time range. Try being more specific.", ephemeral=True)
+            return
+
+        tool_list = [t.strip() for t in tools.split(",") if t.strip()]
+        blocked = []
+
+        for tool in tool_list:
+            if tool not in data["tools"]:
+                continue
+            reservations = data["tools"][tool].get("reservations", [])
+            reservations.append({"user": "admin-block", "time": formatted_time})
+            data["tools"][tool]["reservations"] = reservations
+            blocked.append(tool)
+
+        if blocked:
+            save_tools(data)
+            await interaction.followup.send(f"Blocked **{', '.join(blocked)}** for `{formatted_time}`.")
+        else:
+            await interaction.followup.send("No valid tools matched.", ephemeral=True)
+
+
+    @app_commands.command(name="adunblock", description="Admin: Unblock multiple tools")
+    @app_commands.describe(tools="Comma-separated list of tools to unblock")
+    @is_admin_check()
+    async def admin_unblock_all(self, interaction: discord.Interaction, tools: str):
+        await interaction.response.defer(thinking=True)
+
+        data = load_tools()
+        tool_list = [t.strip() for t in tools.split(",") if t.strip()]
+        unblocked = []
+
+        for tool in tool_list:
+            if tool not in data["tools"]:
+                continue
+            original = data["tools"][tool].get("reservations", [])
+            filtered = [r for r in original if r.get("user") != "admin-block"]
+            if len(filtered) != len(original):
+                data["tools"][tool]["reservations"] = filtered
+                unblocked.append(tool)
+
+        if unblocked:
+            save_tools(data)
+            await interaction.followup.send(f"Unblocked **{', '.join(unblocked)}**")
+        else:
+            await interaction.followup.send("No admin-blocks found on the listed tools.", ephemeral=True)
+
+    @admin_block_all.autocomplete("tools")
+    @admin_unblock_all.autocomplete("tools")
+    async def tool_autocomplete(self, interaction: discord.Interaction, current: str):
+        data = load_tools()
+        all_tools = list(data.get("tools", {}).keys())
+        filtered = [t for t in all_tools if current.lower() in t.lower()]
+        return [app_commands.Choice(name=t, value=t) for t in filtered][:25]
+
+
     @adjust_time.autocomplete("old_time")
     @adjust_time_admin.autocomplete("old_time")
     async def old_time_autocomplete(self, interaction: discord.Interaction, current: str):
