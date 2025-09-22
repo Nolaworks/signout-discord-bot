@@ -17,7 +17,7 @@ from utils import extract_tool_from_channel, load_tools, save_tools, save_expire
 
 # Discord Token load
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("TEST_DISCORD_TOKEN")
 #displayName = interaction.user.display_name
 
 # Enable logging
