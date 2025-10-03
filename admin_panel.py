@@ -275,37 +275,112 @@ class AdminPanel(commands.Cog):
         else:
             await interaction.response.send_message(f"Tool {tool} does not exist.", ephemeral=True)
     
-    @app_commands.command(name="adblock", description="Admin: Block multiple tools for a time range")
+    @app_commands.command(name="adblock", description="Admin: Block all currently-free tools for a time range")
     @app_commands.describe(
-    tools="Comma-separated list of tools to block",
-    time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')")
+        time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')"
+    )
     @is_admin_check()
-    async def admin_block_all(self, interaction: discord.Interaction, tools: str, time: str):
+    async def admin_block_all(self, interaction: discord.Interaction, time: str):
+        """Apply an admin block to every tool that is not currently in an active reservation.
+
+        Reservations outside of the block window remain allowed as normal.
+        """
         await interaction.response.defer(thinking=True)
 
         data = load_tools()
+        if not data.get("tools"):
+            await interaction.followup.send("No tools found to block.", ephemeral=True)
+            return
+
         formatted_time = await parse_time_with_gpt(time)
 
         if not formatted_time:
             await interaction.followup.send("Couldn't interpret time range. Try being more specific.", ephemeral=True)
             return
 
-        tool_list = [t.strip() for t in tools.split(",") if t.strip()]
-        blocked = []
+        # Parse the block window into localized datetimes
+        central_tz = CENTRAL
+        try:
+            if " to " in formatted_time:
+                s_str, e_str = formatted_time.split(" to ")
+                block_start = central_tz.localize(datetime.datetime.strptime(s_str, "%m-%d-%Y %H:%M"))
+                block_end = central_tz.localize(datetime.datetime.strptime(e_str, "%m-%d-%Y %H:%M"))
+            else:
+                block_start = central_tz.localize(datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M"))
+                block_end = block_start
+        except Exception:
+            await interaction.followup.send("Parsed time range appears invalid.", ephemeral=True)
+            return
 
-        for tool in tool_list:
-            if tool not in data["tools"]:
+        now = datetime.datetime.now(central_tz)
+
+        def parse_res_time(tstr: str):
+            try:
+                if " to " in tstr:
+                    a, b = tstr.split(" to ")
+                    s = central_tz.localize(datetime.datetime.strptime(a, "%m-%d-%Y %H:%M"))
+                    e = central_tz.localize(datetime.datetime.strptime(b, "%m-%d-%Y %H:%M"))
+                    return s, e
+                else:
+                    s = central_tz.localize(datetime.datetime.strptime(tstr, "%m-%d-%Y %H:%M"))
+                    return s, s
+            except Exception:
+                return None, None
+
+        def overlaps(a1, a2, b1, b2):
+            return a1 < b2 and b1 < a2
+
+        blocked_tools = []
+        skipped_active_now = []
+        skipped_overlap_block = []
+
+        for tool_name, trec in data.get("tools", {}).items():
+            reservations = trec.get("reservations", []) if isinstance(trec, dict) else []
+
+            # If tool currently in an active reservation, skip blocking it
+            currently_active = False
+            has_overlap_with_block = False
+            for r in reservations:
+                s, e = parse_res_time(r.get("time", ""))
+                if not s or not e:
+                    continue
+                if s <= now < e:
+                    currently_active = True
+                if overlaps(block_start, block_end, s, e):
+                    has_overlap_with_block = True
+                if currently_active and has_overlap_with_block:
+                    break
+
+            if currently_active:
+                skipped_active_now.append(tool_name)
                 continue
-            reservations = data["tools"][tool].get("reservations", [])
-            reservations.append({"user": "admin-block", "time": formatted_time})
-            data["tools"][tool]["reservations"] = reservations
-            blocked.append(tool)
 
-        if blocked:
+            # Avoid creating overlapping entries if there's already something in the block window
+            if has_overlap_with_block:
+                skipped_overlap_block.append(tool_name)
+                continue
+
+            # Append admin block
+            reservations.append({"user": "admin-block", "time": formatted_time})
+            trec["reservations"] = reservations
+            data["tools"][tool_name] = trec
+            blocked_tools.append(tool_name)
+
+        if blocked_tools:
             save_tools(data)
-            await interaction.followup.send(f"Blocked **{', '.join(blocked)}** for `{formatted_time}`.")
+
+        summary_parts = []
+        if blocked_tools:
+            summary_parts.append(f"Blocked: {', '.join(blocked_tools)}")
+        if skipped_active_now:
+            summary_parts.append(f"Skipped (in use now): {', '.join(skipped_active_now)}")
+        if skipped_overlap_block:
+            summary_parts.append(f"Skipped (already has overlap in window): {', '.join(skipped_overlap_block)}")
+
+        if not summary_parts:
+            await interaction.followup.send("No tools qualified for blocking.", ephemeral=True)
         else:
-            await interaction.followup.send("No valid tools matched.", ephemeral=True)
+            await interaction.followup.send(f"{'; '.join(summary_parts)}\nWindow: `{formatted_time}`")
 
 
     @app_commands.command(name="adunblock", description="Admin: Unblock multiple tools")
@@ -333,7 +408,6 @@ class AdminPanel(commands.Cog):
         else:
             await interaction.followup.send("No admin-blocks found on the listed tools.", ephemeral=True)
 
-    @admin_block_all.autocomplete("tools")
     @admin_unblock_all.autocomplete("tools")
     async def tool_autocomplete(self, interaction: discord.Interaction, current: str):
         """Suggest tool names for comma-separated input by aggregating from tools.json and guild channels."""
