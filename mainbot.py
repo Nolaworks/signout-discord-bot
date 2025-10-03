@@ -245,10 +245,11 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         except Exception:
             pass  # ignore attach failure; reservation already saved
 
-    await interaction.followup.send(
-        f"Signed out **{tool}** for **{time}** by {interaction.user.display_name} — `{formatted_time}`",
-        files=files or None,
-    )
+    message = f"Signed out **{tool}** for **{time}** by {interaction.user.display_name} — `{formatted_time}`"
+    if files:
+        await interaction.followup.send(message, files=files)
+    else:
+        await interaction.followup.send(message)
     
 async def reservation_autocomplete(interaction: discord.Interaction, current: str):
     data = load_tools()
@@ -301,10 +302,11 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
                     except Exception:
                         pass
 
-                await interaction.response.send_message(
-                    f"{interaction.user.display_name} returned **{tool}** — `{reservation}`",
-                    files=files or None,
-                )
+                msg = f"{interaction.user.display_name} returned **{tool}** — `{reservation}`"
+                if files:
+                    await interaction.response.send_message(msg, files=files)
+                else:
+                    await interaction.response.send_message(msg)
                 return
     await interaction.response.send_message(f"No active reservation matching '{reservation}' for {tool}.", ephemeral=True)
 
