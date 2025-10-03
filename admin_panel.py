@@ -39,7 +39,8 @@ class AdminPanel(commands.Cog):
         if tool in data["tools"]:
             await interaction.response.send_message(f"Tool {tool} already exists.", ephemeral=True)
         else:
-            data["tools"][tool] = []
+            # Ensure consistent tool record structure
+            data["tools"][tool] = {"max_time": 168, "reservations": []}
             save_tools(data)
             await interaction.response.send_message(f"Tool {tool} has been added.")
 
@@ -335,10 +336,40 @@ class AdminPanel(commands.Cog):
     @admin_block_all.autocomplete("tools")
     @admin_unblock_all.autocomplete("tools")
     async def tool_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Suggest tool names for comma-separated input by aggregating from tools.json and guild channels."""
+        # Aggregate tools from tools.json
         data = load_tools()
-        all_tools = list(data.get("tools", {}).keys())
-        filtered = [t for t in all_tools if current.lower() in t.lower()]
-        return [app_commands.Choice(name=t, value=t) for t in filtered][:25]
+        json_tools = set(data.get("tools", {}).keys())
+
+        # Also collect from existing guild channels named signout-*
+        channel_tools = set()
+        try:
+            guild = getattr(interaction, "guild", None)
+            if guild is not None:
+                for ch in guild.text_channels:
+                    name = getattr(ch, "name", "")
+                    if isinstance(name, str) and name.startswith("signout-"):
+                        channel_tools.add(name.replace("signout-", "", 1))
+        except Exception:
+            # If guild access fails, ignore and proceed with json tools only
+            pass
+
+        # Merge and filter
+        all_tools = sorted(json_tools | channel_tools, key=str.lower)
+
+        # Support comma-separated partials: match only the last token the user is typing
+        token = current.split(",")[-1].strip() if isinstance(current, str) else ""
+        if token:
+            filtered = [t for t in all_tools if token.lower() in t.lower()]
+        else:
+            filtered = all_tools
+
+        # Return up to 25 options; keep original comma prefix if present
+        prefix = "" if "," not in current else ",".join(part.strip() for part in current.split(",")[:-1] if part.strip())
+        def build_value(t: str) -> str:
+            return f"{prefix}, {t}".strip().lstrip(",") if prefix else t
+
+        return [app_commands.Choice(name=t, value=build_value(t)) for t in filtered][:25]
 
 
     @adjust_time.autocomplete("old_time")
