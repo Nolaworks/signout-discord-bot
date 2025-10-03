@@ -277,10 +277,11 @@ class AdminPanel(commands.Cog):
     
     @app_commands.command(name="adblock", description="Admin: Block all currently-free tools for a time range")
     @app_commands.describe(
-        time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')"
+        time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
+        force="If true, override overlapping future reservations by trimming/canceling"
     )
     @is_admin_check()
-    async def admin_block_all(self, interaction: discord.Interaction, time: str):
+    async def admin_block_all(self, interaction: discord.Interaction, time: str, force: bool = False):
         """Apply an admin block to every tool that is not currently in an active reservation.
 
         Reservations outside of the block window remain allowed as normal.
@@ -333,6 +334,7 @@ class AdminPanel(commands.Cog):
         blocked_tools = []
         skipped_active_now = []
         skipped_overlap_block = []
+        modified_reservations = []  # (tool, count_changes)
 
         for tool_name, trec in data.get("tools", {}).items():
             reservations = trec.get("reservations", []) if isinstance(trec, dict) else []
@@ -340,7 +342,7 @@ class AdminPanel(commands.Cog):
             # If tool currently in an active reservation, skip blocking it
             currently_active = False
             has_overlap_with_block = False
-            for r in reservations:
+            for r in list(reservations):
                 s, e = parse_res_time(r.get("time", ""))
                 if not s or not e:
                     continue
@@ -355,10 +357,52 @@ class AdminPanel(commands.Cog):
                 skipped_active_now.append(tool_name)
                 continue
 
-            # Avoid creating overlapping entries if there's already something in the block window
+            # If overlapping reservations exist, honor force flag to modify/cancel user reservations
+            changes_for_tool = 0
             if has_overlap_with_block:
-                skipped_overlap_block.append(tool_name)
-                continue
+                if not force:
+                    skipped_overlap_block.append(tool_name)
+                    continue
+                # With force=True, remove any overlapping admin-blocks and adjust/cancel user reservations
+                new_reservations = []
+                for r in reservations:
+                    s, e = parse_res_time(r.get("time", ""))
+                    if not s or not e:
+                        new_reservations.append(r)
+                        continue
+                    if not overlaps(block_start, block_end, s, e):
+                        new_reservations.append(r)
+                        continue
+                    # Overlaps block window
+                    if r.get("user") == "admin-block":
+                        # Drop existing overlapping admin-block entries
+                        changes_for_tool += 1
+                        continue
+                    # User reservation: trim/cancel/split
+                    before_start, before_end = s, min(e, block_start)
+                    after_start, after_end = max(s, block_end), e
+                    kept_any = False
+                    # Keep before segment if it has positive duration
+                    if before_start < before_end:
+                        nr = dict(r)
+                        nr["time"] = f"{_fmt(before_start)} to {_fmt(before_end)}"
+                        # Clear original_text when auto-adjusting to avoid confusion
+                        nr.pop("original_text", None)
+                        new_reservations.append(nr)
+                        kept_any = True
+                    # Keep after segment if positive duration
+                    if after_start < after_end:
+                        nr2 = dict(r)
+                        nr2["time"] = f"{_fmt(after_start)} to {_fmt(after_end)}"
+                        nr2.pop("original_text", None)
+                        new_reservations.append(nr2)
+                        kept_any = True
+                    # If neither part remains, it's fully within block -> removed
+                    changes_for_tool += 1 if not kept_any else 1  # count change
+                reservations = new_reservations
+                trec["reservations"] = reservations
+                if changes_for_tool:
+                    modified_reservations.append((tool_name, changes_for_tool))
 
             # Append admin block
             reservations.append({"user": "admin-block", "time": formatted_time})
@@ -377,73 +421,150 @@ class AdminPanel(commands.Cog):
         if skipped_overlap_block:
             summary_parts.append(f"Skipped (already has overlap in window): {', '.join(skipped_overlap_block)}")
 
+        # Add force summary if applicable
+        if force and modified_reservations:
+            summary_parts.append(
+                "Adjusted reservations: " + ", ".join(f"{t}(~{c})" for t, c in modified_reservations)
+            )
+
         if not summary_parts:
             await interaction.followup.send("No tools qualified for blocking.", ephemeral=True)
         else:
             await interaction.followup.send(f"{'; '.join(summary_parts)}\nWindow: `{formatted_time}`")
 
-
-    @app_commands.command(name="adunblock", description="Admin: Unblock multiple tools")
-    @app_commands.describe(tools="Comma-separated list of tools to unblock")
+    @app_commands.command(name="listblocks", description="Admin: Show active/upcoming admin blocks per tool")
     @is_admin_check()
-    async def admin_unblock_all(self, interaction: discord.Interaction, tools: str):
+    async def list_blocks(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        data = load_tools()
+        if not data.get("tools"):
+            await interaction.followup.send("No tools found.", ephemeral=True)
+            return
+
+        central_tz = CENTRAL
+        now = datetime.datetime.now(central_tz)
+
+        def parse_res_time(tstr: str):
+            try:
+                if " to " in tstr:
+                    a, b = tstr.split(" to ")
+                    s = central_tz.localize(datetime.datetime.strptime(a, "%m-%d-%Y %H:%M"))
+                    e = central_tz.localize(datetime.datetime.strptime(b, "%m-%d-%Y %H:%M"))
+                    return s, e
+                else:
+                    s = central_tz.localize(datetime.datetime.strptime(tstr, "%m-%d-%Y %H:%M"))
+                    return s, s
+            except Exception:
+                return None, None
+
+        lines = []
+        for tool_name, trec in data.get("tools", {}).items():
+            reservations = trec.get("reservations", []) if isinstance(trec, dict) else []
+            blocks = []
+            for r in reservations:
+                if r.get("user") != "admin-block":
+                    continue
+                s, e = parse_res_time(r.get("time", ""))
+                if not s or not e:
+                    continue
+                if e <= now:
+                    continue
+                blocks.append((s, e))
+            if blocks:
+                blocks.sort(key=lambda x: x[0])
+                rngs = ", ".join(f"{_fmt(s)} to {_fmt(e)}" for s, e in blocks[:10])
+                more = f" (+{len(blocks)-10} more)" if len(blocks) > 10 else ""
+                lines.append(f"• {tool_name}: {rngs}{more}")
+
+        if not lines:
+            await interaction.followup.send("No active or upcoming admin blocks.", ephemeral=True)
+        else:
+            await interaction.followup.send("Admin blocks:\n" + "\n".join(lines), ephemeral=True)
+
+
+    @app_commands.command(name="adunblock", description="Admin: Remove admin blocks overlapping a time range (keeps user reservations)")
+    @app_commands.describe(
+        time="Time range to unblock (e.g. 'now to 2pm' or 'tomorrow 10-2')"
+    )
+    @is_admin_check()
+    async def admin_unblock_all(self, interaction: discord.Interaction, time: str):
+        """Undo admin blocks that overlap the given window across all tools.
+
+        Only removes reservations where user == 'admin-block'. All other reservations remain untouched.
+        """
         await interaction.response.defer(thinking=True)
 
         data = load_tools()
-        tool_list = [t.strip() for t in tools.split(",") if t.strip()]
-        unblocked = []
+        if not data.get("tools"):
+            await interaction.followup.send("No tools found to unblock.", ephemeral=True)
+            return
 
-        for tool in tool_list:
-            if tool not in data["tools"]:
-                continue
-            original = data["tools"][tool].get("reservations", [])
-            filtered = [r for r in original if r.get("user") != "admin-block"]
-            if len(filtered) != len(original):
-                data["tools"][tool]["reservations"] = filtered
-                unblocked.append(tool)
+        formatted_time = await parse_time_with_gpt(time)
+        if not formatted_time:
+            await interaction.followup.send("Couldn't interpret time range. Try being more specific.", ephemeral=True)
+            return
 
-        if unblocked:
-            save_tools(data)
-            await interaction.followup.send(f"Unblocked **{', '.join(unblocked)}**")
-        else:
-            await interaction.followup.send("No admin-blocks found on the listed tools.", ephemeral=True)
-
-    @admin_unblock_all.autocomplete("tools")
-    async def tool_autocomplete(self, interaction: discord.Interaction, current: str):
-        """Suggest tool names for comma-separated input by aggregating from tools.json and guild channels."""
-        # Aggregate tools from tools.json
-        data = load_tools()
-        json_tools = set(data.get("tools", {}).keys())
-
-        # Also collect from existing guild channels named signout-*
-        channel_tools = set()
+        # Parse unblock window
+        central_tz = CENTRAL
         try:
-            guild = getattr(interaction, "guild", None)
-            if guild is not None:
-                for ch in guild.text_channels:
-                    name = getattr(ch, "name", "")
-                    if isinstance(name, str) and name.startswith("signout-"):
-                        channel_tools.add(name.replace("signout-", "", 1))
+            if " to " in formatted_time:
+                s_str, e_str = formatted_time.split(" to ")
+                ub_start = central_tz.localize(datetime.datetime.strptime(s_str, "%m-%d-%Y %H:%M"))
+                ub_end = central_tz.localize(datetime.datetime.strptime(e_str, "%m-%d-%Y %H:%M"))
+            else:
+                ub_start = central_tz.localize(datetime.datetime.strptime(formatted_time, "%m-%d-%Y %H:%M"))
+                ub_end = ub_start
         except Exception:
-            # If guild access fails, ignore and proceed with json tools only
-            pass
+            await interaction.followup.send("Parsed time range appears invalid.", ephemeral=True)
+            return
 
-        # Merge and filter
-        all_tools = sorted(json_tools | channel_tools, key=str.lower)
+        def parse_res_time(tstr: str):
+            try:
+                if " to " in tstr:
+                    a, b = tstr.split(" to ")
+                    s = central_tz.localize(datetime.datetime.strptime(a, "%m-%d-%Y %H:%M"))
+                    e = central_tz.localize(datetime.datetime.strptime(b, "%m-%d-%Y %H:%M"))
+                    return s, e
+                else:
+                    s = central_tz.localize(datetime.datetime.strptime(tstr, "%m-%d-%Y %H:%M"))
+                    return s, s
+            except Exception:
+                return None, None
 
-        # Support comma-separated partials: match only the last token the user is typing
-        token = current.split(",")[-1].strip() if isinstance(current, str) else ""
-        if token:
-            filtered = [t for t in all_tools if token.lower() in t.lower()]
+        def overlaps(a1, a2, b1, b2):
+            return a1 < b2 and b1 < a2
+
+        changed_tools = []
+        removed_counts = {}
+
+        for tool_name, trec in data.get("tools", {}).items():
+            reservations = trec.get("reservations", []) if isinstance(trec, dict) else []
+            keep = []
+            removed = 0
+            for r in reservations:
+                if r.get("user") != "admin-block":
+                    keep.append(r)
+                    continue
+                s, e = parse_res_time(r.get("time", ""))
+                if not s or not e or not overlaps(ub_start, ub_end, s, e):
+                    keep.append(r)
+                else:
+                    removed += 1
+
+            if removed:
+                trec["reservations"] = keep
+                data["tools"][tool_name] = trec
+                changed_tools.append(tool_name)
+                removed_counts[tool_name] = removed
+
+        if changed_tools:
+            save_tools(data)
+            summary = ", ".join(f"{t} (-{removed_counts[t]})" for t in changed_tools)
+            await interaction.followup.send(f"Removed admin blocks overlapping `{formatted_time}` from: {summary}")
         else:
-            filtered = all_tools
+            await interaction.followup.send("No admin-block entries overlapped the given window.", ephemeral=True)
 
-        # Return up to 25 options; keep original comma prefix if present
-        prefix = "" if "," not in current else ",".join(part.strip() for part in current.split(",")[:-1] if part.strip())
-        def build_value(t: str) -> str:
-            return f"{prefix}, {t}".strip().lstrip(",") if prefix else t
-
-        return [app_commands.Choice(name=t, value=build_value(t)) for t in filtered][:25]
+    # No autocomplete needed for adunblock anymore; it uses a time range rather than tools list.
 
 
     @adjust_time.autocomplete("old_time")
