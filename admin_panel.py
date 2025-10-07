@@ -1,12 +1,16 @@
 import os
 import datetime
 import pytz
+import logging
+import asyncio
+import io
+from collections import deque
 
 import discord
 from gptparse import rewrite_reservation_with_gpt, parse_time_with_gpt
 from openai import AsyncOpenAI
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from utils import *
 from typing import Optional, List
@@ -26,10 +30,143 @@ def _fmt(dt_):
 def _overlaps(a1, a2, b1, b2):
     return a1 < b2 and b1 < a2
 
+
+class _LogBufferHandler(logging.Handler):
+    """A logging handler that keeps a ring buffer and pushes new lines into an asyncio queue."""
+    def __init__(self, buffer: deque, loop: asyncio.AbstractEventLoop, q: asyncio.Queue):
+        super().__init__()
+        self.buffer = buffer
+        self.loop = loop
+        self.q = q
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+        except Exception:
+            return
+        self.buffer.append(msg)
+        # Hand off to queue thread-safely
+        try:
+            self.loop.call_soon_threadsafe(self.q.put_nowait, msg)
+        except Exception:
+            pass
+
 class AdminPanel(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.ai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # --- Logging tooling ---
+        self._log_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._log_buffer = deque(maxlen=1000)
+        self._watch_channel_id: int | None = None
+
+        loop = asyncio.get_running_loop()
+        handler = _LogBufferHandler(self._log_buffer, loop, self._log_queue)
+        fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
+        handler.setFormatter(fmt)
+        handler.setLevel(logging.INFO)
+        logging.getLogger().addHandler(handler)
+        self._log_handler = handler
+
+        # Background sender for watched logs
+        self._drain_log_queue.start()
+
+    def cog_unload(self):
+        try:
+            self._drain_log_queue.cancel()
+        except Exception:
+            pass
+        if hasattr(self, "_log_handler"):
+            logging.getLogger().removeHandler(self._log_handler)
+
+    @tasks.loop(seconds=2.0)
+    async def _drain_log_queue(self):
+        if not self._watch_channel_id:
+            # Drain quietly to prevent memory build-up
+            try:
+                while not self._log_queue.empty():
+                    await self._log_queue.get()
+            except Exception:
+                pass
+            return
+        ch = self.bot.get_channel(self._watch_channel_id)
+        if ch is None:
+            return
+        # Bundle up to 30 lines per tick
+        lines = []
+        for _ in range(30):
+            try:
+                item = self._log_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                lines.append(item)
+        if lines:
+            # Truncate message length to Discord limits
+            text = "\n".join(lines)
+            if len(text) > 1800:
+                text = text[-1800:]
+            try:
+                await ch.send(f"```log\n{text}\n```")
+            except Exception:
+                # If sending fails, stop watching to avoid noise
+                self._watch_channel_id = None
+
+    @_drain_log_queue.before_loop
+    async def _wait_until_ready_for_logs(self):
+        await self.bot.wait_until_ready()
+
+    # ---- Log admin commands ----
+    @app_commands.command(name="loglevel", description="Admin: Set global log level")
+    @is_admin_check()
+    @app_commands.describe(level="CRITICAL|ERROR|WARNING|INFO|DEBUG")
+    async def set_log_level(self, interaction: discord.Interaction, level: str):
+        level = level.upper().strip()
+        mapping = {
+            "CRITICAL": logging.CRITICAL,
+            "ERROR": logging.ERROR,
+            "WARNING": logging.WARNING,
+            "INFO": logging.INFO,
+            "DEBUG": logging.DEBUG,
+        }
+        if level not in mapping:
+            await interaction.response.send_message("Invalid level. Use CRITICAL|ERROR|WARNING|INFO|DEBUG", ephemeral=True)
+            return
+        logging.getLogger().setLevel(mapping[level])
+        # Also set our handler level
+        if hasattr(self, "_log_handler"):
+            self._log_handler.setLevel(mapping[level])
+        await interaction.response.send_message(f"Log level set to {level}", ephemeral=True)
+
+    @app_commands.command(name="taillogs", description="Admin: Show recent log lines")
+    @is_admin_check()
+    @app_commands.describe(lines="Number of lines to show (max 200)")
+    async def tail_logs(self, interaction: discord.Interaction, lines: int = 50):
+        lines = max(1, min(lines, 200))
+        # Collect from ring buffer
+        buf = list(self._log_buffer)[-lines:]
+        if not buf:
+            await interaction.response.send_message("No logs captured yet.", ephemeral=True)
+            return
+        text = "\n".join(buf)
+        if len(text) < 1900:
+            await interaction.response.send_message(f"```log\n{text}\n```", ephemeral=True)
+        else:
+            # Fallback to a file attachment
+            data = io.BytesIO(text.encode("utf-8"))
+            file = discord.File(data, filename="logs.txt")
+            await interaction.response.send_message(content="Recent logs:", file=file, ephemeral=True)
+
+    @app_commands.command(name="watchlogs", description="Admin: Stream logs to this channel (enable/disable)")
+    @is_admin_check()
+    @app_commands.describe(enable="Enable or disable streaming logs here")
+    async def watch_logs(self, interaction: discord.Interaction, enable: bool = True):
+        if enable:
+            self._watch_channel_id = interaction.channel.id
+            await interaction.response.send_message("Now streaming logs to this channel.", ephemeral=True)
+        else:
+            self._watch_channel_id = None
+            await interaction.response.send_message("Stopped streaming logs.", ephemeral=True)
     
     @app_commands.command(name="addtool", description="Admin: Add a tool manually")
     @is_admin_check()
