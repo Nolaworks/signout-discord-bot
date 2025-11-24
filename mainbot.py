@@ -3,14 +3,14 @@
 import discord
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from discord import app_commands
 from discord.ext import commands, tasks
 
 from config import get_config
 from db_session import get_db_session, init_database, close_database
 from repositories import UserRepository, ToolRepository, ReservationRepository, ReservationHistoryRepository
-from database import ReservationStatusEnum
+from database import ReservationStatusEnum, UserModel
 from gptparse import parse_time_with_gpt
 from time_utils import parse_time_range, get_now, calculate_duration_hours, CENTRAL_TZ
 from discord_utils import (
@@ -52,13 +52,15 @@ async def clean_expired_signouts():
     """Background task to clean up expired reservations"""
     try:
         now = get_now(CENTRAL_TZ)
+        # Convert to naive for database comparison
+        now_naive = now.replace(tzinfo=None)
         
         with get_db_session() as session:
             res_repo = ReservationRepository(session)
             history_repo = ReservationHistoryRepository(session)
             
             # Get all expired reservations
-            expired = res_repo.get_expired_reservations(now)
+            expired = res_repo.get_expired_reservations(now_naive)
             
             if expired:
                 logger.info(f"Found {len(expired)} expired reservations to archive")
@@ -69,7 +71,7 @@ async def clean_expired_signouts():
                     
                     # Update status to expired
                     reservation.status = ReservationStatusEnum.EXPIRED
-                    reservation.updated_at = datetime.utcnow()
+                    reservation.updated_at = datetime.now(timezone.utc)
                     
                     logger.info(f"Archived expired reservation: {reservation.username} - {reservation.tool_name}")
                 
@@ -88,19 +90,32 @@ async def notification_check_task():
         return
     
     try:
-        logger.debug("Running notification check task...")
+        from time_utils import get_now, CENTRAL_TZ
+        now = get_now(CENTRAL_TZ)
+        
         with get_db_session() as session:
+            from repositories import ReservationRepository
+            repo = ReservationRepository(session)
+            active_count = len(repo.get_active_reservations())
+            
+            # Log check time periodically (every 5 minutes)
+            if now.minute % 5 == 0:
+                logger.info(f"Notification check at {now.strftime('%H:%M')} CT - {active_count} active reservations")
+            
             # Check for upcoming reservations (reminders)
-            await notification_manager.check_upcoming_reservations(session)
+            upcoming_count = await notification_manager.check_upcoming_reservations(session)
             
             # Check for expiring reservations (warnings)
-            await notification_manager.check_expiring_reservations(session)
+            expiring_count = await notification_manager.check_expiring_reservations(session)
             
             # Check for tool availability (waitlist)
-            await notification_manager.check_tool_availability(session)
+            waitlist_count = await notification_manager.check_tool_availability(session)
             
             session.commit()
-        logger.debug("Notification check task completed")
+            
+            # Log if notifications were sent
+            if upcoming_count > 0 or expiring_count > 0 or waitlist_count > 0:
+                logger.info(f"Notifications sent: {upcoming_count} reminders, {expiring_count} warnings, {waitlist_count} waitlist")
     except Exception as e:
         logger.error(f"Error in notification check task: {e}", exc_info=True)
 
@@ -312,6 +327,7 @@ async def my_waitlist(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="adminsummary", description="[ADMIN] Manually send the daily notification summary")
+@app_commands.default_permissions(administrator=True)
 async def admin_summary(interaction: discord.Interaction):
     """Manually trigger the daily admin notification summary (admin only)"""
     if not user_is_admin(interaction.user):
@@ -324,15 +340,31 @@ async def admin_summary(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
     with get_db_session() as session:
-        await notification_manager.send_daily_admin_summary(session)
+        # Get all admin users
+        from repositories import UserRepository
+        user_repo = UserRepository(session)
+        admin_users = session.query(UserModel).filter_by(is_admin=True).all()
+        admin_ids = [user.user_id for user in admin_users]
+        
+        if not admin_ids:
+            await interaction.followup.send(
+                "No admin users found in the database.",
+                ephemeral=True
+            )
+            return
+        
+        # Send summary to all admins
+        await notification_manager.send_daily_summary(session, admin_ids)
+        session.commit()
     
     await interaction.followup.send(
-        "Daily notification summary has been sent!",
+        f"Daily notification summary has been sent to {len(admin_ids)} admin(s)!",
         ephemeral=True
     )
 
 
 @bot.tree.command(name="testnotify", description="[ADMIN] Test notification system with current reservations")
+@app_commands.default_permissions(administrator=True)
 async def test_notify(interaction: discord.Interaction):
     """Manually trigger notification checks (admin only)"""
     if not user_is_admin(interaction.user):
@@ -343,6 +375,9 @@ async def test_notify(interaction: discord.Interaction):
         return
     
     await interaction.response.defer(ephemeral=True)
+    
+    from time_utils import get_now, CENTRAL_TZ
+    from datetime import timedelta
     
     with get_db_session() as session:
         # Check for any active reservations
@@ -357,22 +392,79 @@ async def test_notify(interaction: discord.Interaction):
             )
             return
         
-        # Run all notification checks
-        await notification_manager.check_upcoming_reservations(session)
-        await notification_manager.check_expiring_reservations(session)
-        await notification_manager.check_tool_availability(session)
+        # Analyze reservation timing
+        now = get_now(CENTRAL_TZ)
+        upcoming_window_start = (now + timedelta(minutes=15)).replace(tzinfo=None)
+        upcoming_window_end = (now + timedelta(minutes=20)).replace(tzinfo=None)
+        expiring_window_start = (now + timedelta(minutes=15)).replace(tzinfo=None)
+        expiring_window_end = (now + timedelta(minutes=20)).replace(tzinfo=None)
+        
+        upcoming_count = 0
+        expiring_count = 0
+        reservation_details = []
+        
+        for res in active:
+            time_to_start = (res.start_time - now.replace(tzinfo=None)).total_seconds() / 60
+            time_to_end = (res.end_time - now.replace(tzinfo=None)).total_seconds() / 60
+            
+            status = ""
+            if upcoming_window_start <= res.start_time < upcoming_window_end:
+                upcoming_count += 1
+                status = "🔔 Will send START reminder"
+            elif expiring_window_start <= res.end_time < expiring_window_end:
+                expiring_count += 1
+                status = "⚠️ Will send END warning"
+            else:
+                if time_to_start > 0:
+                    status = f"Starts in {int(time_to_start)} min (no notification yet)"
+                elif time_to_end > 0:
+                    status = f"Ends in {int(time_to_end)} min (no notification yet)"
+                else:
+                    status = "Already ended"
+            
+            reservation_details.append(f"• {res.username} - {res.tool_name}: {status}")
+        
+        # Run all notification checks and get counts
+        reminder_sent = await notification_manager.check_upcoming_reservations(session)
+        warning_sent = await notification_manager.check_expiring_reservations(session)
+        waitlist_sent = await notification_manager.check_tool_availability(session)
         session.commit()
+        
+        logger.info(f"Test notify: {reminder_sent} reminders, {warning_sent} warnings, {waitlist_sent} waitlist sent")
+        
+        # Send test notification to admin
+        try:
+            embed = discord.Embed(
+                title="Test Notification",
+                description="This is a test notification from the signout bot!",
+                color=discord.Color.blue()
+            )
+            embed.add_field(
+                name="Notification System Status",
+                value="Notifications are working properly",
+                inline=False
+            )
+            embed.set_footer(text="If you received this, your DMs are working!")
+            await interaction.user.send(embed=embed)
+            logger.info(f"Sent test notification to {interaction.user.name}")
+        except discord.Forbidden:
+            logger.warning(f"Cannot send test notification to {interaction.user.name} - DMs disabled")
     
-    await interaction.followup.send(
-        f"  Notification checks completed!\n"
-        f"• Checked {len(active)} active reservation(s)\n"
-        f"• Reminders sent for reservations starting in 15-20 min\n"
-        f"• Warnings sent for reservations ending in 15-20 min\n"
-        f"• Waitlist notifications sent if tools available\n\n"
-        f"Check your DMs if any notifications were triggered.",
-
-        ephemeral=True
+    details_text = "\n".join(reservation_details[:10])  # Limit to 10
+    if len(reservation_details) > 10:
+        details_text += f"\n... and {len(reservation_details) - 10} more"
+    
+    response = (
+        f"**Notification Check Results**\n\n"
+        f"**Active Reservations:** {len(active)}\n"
+        f"**Reminders Sent:** {reminder_sent}\n"
+        f"**Warnings Sent:** {warning_sent}\n"
+        f"**Waitlist Notifications:** {waitlist_sent}\n\n"
+        f"**Reservation Status:**\n{details_text}\n\n"
+        f"Test notification sent to your DMs!"
     )
+    
+    await interaction.followup.send(response, ephemeral=True)
 
 
 @bot.tree.command(name="help", description="How to use the signout system")

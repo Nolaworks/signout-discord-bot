@@ -45,9 +45,10 @@ class NotificationManager:
     
     # ========== Pre-Reservation Reminders ==========
     
-    async def check_upcoming_reservations(self, session: Session):
+    async def check_upcoming_reservations(self, session: Session) -> int:
         """Check for reservations starting soon and send reminders"""
         now = get_now(CENTRAL_TZ)
+        sent_count = 0
         
         # Find reservations starting in the next 15-20 minutes (window to avoid duplicates)
         # Convert to naive for database comparison (database stores naive times)
@@ -60,10 +61,14 @@ class NotificationManager:
             ReservationModel.start_time < reminder_end
         ).all()
         
+        if len(upcoming_reservations) > 0:
+            logger.info(f"Found {len(upcoming_reservations)} reservations starting in 15-20 minutes")
+        
         for reservation in upcoming_reservations:
             # Check if user wants reminders
             prefs = self.get_preferences(session, reservation.user_id)
             if not prefs.reminder_enabled:
+                logger.info(f"Skipping reminder for {reservation.username} - reminders disabled")
                 continue
             
             # Check if we already sent a reminder (look for log entry in last 30 minutes)
@@ -75,10 +80,14 @@ class NotificationManager:
             ).first()
             
             if recent_reminder:
+                logger.info(f"Skipping reminder for {reservation.username} - already sent at {recent_reminder.sent_at}")
                 continue
             
             # Send reminder
             await self.send_reservation_reminder(session, reservation)
+            sent_count += 1
+        
+        return sent_count
     
     async def send_reservation_reminder(self, session: Session, reservation: ReservationModel):
         """Send a DM reminder about an upcoming reservation"""
@@ -130,9 +139,10 @@ class NotificationManager:
     
     # ========== Expiration Warnings ==========
     
-    async def check_expiring_reservations(self, session: Session):
+    async def check_expiring_reservations(self, session: Session) -> int:
         """Check for reservations expiring soon and send warnings"""
         now = get_now(CENTRAL_TZ)
+        sent_count = 0
         
         # Find reservations ending in the next 15-20 minutes
         # Convert to naive for database comparison (database stores naive times)
@@ -145,10 +155,14 @@ class NotificationManager:
             ReservationModel.end_time < warning_end
         ).all()
         
+        if len(expiring_reservations) > 0:
+            logger.info(f"Found {len(expiring_reservations)} reservations ending in 15-20 minutes")
+        
         for reservation in expiring_reservations:
             # Check if user wants warnings
             prefs = self.get_preferences(session, reservation.user_id)
             if not prefs.expiration_warning_enabled:
+                logger.info(f"Skipping expiration warning for {reservation.username} - warnings disabled")
                 continue
             
             # Check if we already sent a warning
@@ -160,10 +174,14 @@ class NotificationManager:
             ).first()
             
             if recent_warning:
+                logger.info(f"Skipping expiration warning for {reservation.username} - already sent at {recent_warning.sent_at}")
                 continue
             
             # Send warning
             await self.send_expiration_warning(session, reservation)
+            sent_count += 1
+        
+        return sent_count
     
     async def send_expiration_warning(self, session: Session, reservation: ReservationModel):
         """Send a DM warning about an expiring reservation"""
@@ -262,15 +280,19 @@ class NotificationManager:
             WaitlistModel.expired_at.is_(None)
         ).all()
     
-    async def check_tool_availability(self, session: Session):
+    async def check_tool_availability(self, session: Session) -> int:
         """Check if any waitlisted tools are now available"""
         now = get_now(CENTRAL_TZ)
+        sent_count = 0
         
         # Get all active waitlist entries
         waitlist_entries = session.query(WaitlistModel).filter(
             WaitlistModel.notified_at.is_(None),
             WaitlistModel.expired_at.is_(None)
         ).all()
+        
+        if len(waitlist_entries) > 0:
+            logger.info(f"Found {len(waitlist_entries)} active waitlist entries")
         
         for entry in waitlist_entries:
             # Check if tool is currently available
@@ -284,6 +306,9 @@ class NotificationManager:
             if active_reservations == 0:
                 # Tool is available! Notify user
                 await self.send_waitlist_notification(session, entry)
+                sent_count += 1
+        
+        return sent_count
     
     async def send_waitlist_notification(self, session: Session, waitlist_entry: WaitlistModel):
         """Notify a user that a waitlisted tool is available"""

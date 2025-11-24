@@ -138,6 +138,7 @@ class AdminPanel(commands.Cog):
     # ========== Log Management Commands ==========
 
     @app_commands.command(name="loglevel", description="Admin: Set global log level")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(level="CRITICAL|ERROR|WARNING|INFO|DEBUG")
     async def set_log_level(self, interaction: discord.Interaction, level: str):
@@ -165,6 +166,7 @@ class AdminPanel(commands.Cog):
         await interaction.response.send_message(f"Log level set to {level}", ephemeral=True)
 
     @app_commands.command(name="taillogs", description="Admin: Show recent log lines")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(lines="Number of lines to show (max 200)")
     async def tail_logs(self, interaction: discord.Interaction, lines: int = 50):
@@ -186,6 +188,7 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(content="Recent logs:", file=file, ephemeral=True)
 
     @app_commands.command(name="watchlogs", description="Admin: Stream logs to this channel (enable/disable)")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(enable="Enable or disable streaming logs here")
     async def watch_logs(self, interaction: discord.Interaction, enable: bool = True):
@@ -200,6 +203,7 @@ class AdminPanel(commands.Cog):
     # ========== Tool Management Commands ==========
 
     @app_commands.command(name="addtool", description="Admin: Add a tool manually")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(tool="Tool name", max_hours="Maximum reservation hours (default: 168)")
     async def add_tool(self, interaction: discord.Interaction, tool: str, max_hours: int = 168):
@@ -230,6 +234,7 @@ class AdminPanel(commands.Cog):
             logger.info(f"Admin {interaction.user.name} added tool: {tool}")
 
     @app_commands.command(name="removetool", description="Admin: Remove a tool")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(tool="Tool name")
     async def remove_tool(self, interaction: discord.Interaction, tool: str):
@@ -319,6 +324,7 @@ class AdminPanel(commands.Cog):
             logger.info(f"Admin {interaction.user.name} removed tool: {tool}")
 
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(hours="Max sign-out duration in hours")
     async def set_max_time(self, interaction: discord.Interaction, hours: int):
@@ -356,6 +362,7 @@ class AdminPanel(commands.Cog):
     # ========== Reservation Management Commands ==========
 
     @app_commands.command(name="clearreservations", description="Admin: Clear all reservations for a tool")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def clear_reservations(self, interaction: discord.Interaction):
         """Clear all active reservations for the current tool"""
@@ -393,6 +400,7 @@ class AdminPanel(commands.Cog):
             logger.info(f"Admin {interaction.user.name} cleared {len(reservations)} reservations for {tool_name}")
 
     @app_commands.command(name="forcereturn", description="Admin: Force return a tool")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def force_return(self, interaction: discord.Interaction):
         """Force return the first active reservation for the current tool"""
@@ -452,6 +460,7 @@ class AdminPanel(commands.Cog):
         await self._adjust_time_core(interaction, old_time, choice.value, new_value, merge=merge)
 
     @app_commands.command(name="adjusttime_admin", description="Admin: Adjust another user's reservation")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(
         user="Target username",
@@ -653,6 +662,7 @@ class AdminPanel(commands.Cog):
             return []
 
     @app_commands.command(name="adblock", description="Admin: Block tool(s) for a time range")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         tool="Select tool to block, or [All Tools]",
         time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
@@ -794,6 +804,7 @@ class AdminPanel(commands.Cog):
             logger.info(f"Admin {interaction.user.name} created admin block: {formatted_time}")
 
     @app_commands.command(name="adunblock", description="Admin: Remove selected admin block(s)")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(block="Select admin block to remove")
     @app_commands.autocomplete(block=admin_block_autocomplete)
     @is_admin_check()
@@ -836,6 +847,7 @@ class AdminPanel(commands.Cog):
             logger.info(f"Admin {interaction.user.name} removed admin block: {tool_name} - {formatted_time}")
 
     @app_commands.command(name="listblocks", description="Admin: Show active/upcoming admin blocks per tool")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def list_blocks(self, interaction: discord.Interaction):
         """List all active admin blocks"""

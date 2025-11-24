@@ -146,13 +146,17 @@ class ReservationRepository:
         
         duration = calculate_duration_hours(start_time, end_time)
         
+        # Convert timezone-aware datetimes to naive (database stores naive times)
+        start_time_naive = start_time.replace(tzinfo=None) if start_time.tzinfo else start_time
+        end_time_naive = end_time.replace(tzinfo=None) if end_time.tzinfo else end_time
+        
         reservation = ReservationModel(
             user_id=user_id,
             username=username,
             tool_id=tool.id,
             tool_name=tool_name,
-            start_time=start_time,
-            end_time=end_time,
+            start_time=start_time_naive,
+            end_time=end_time_naive,
             original_text=original_text,
             formatted_time=formatted_time,
             photo_url=photo_url,
@@ -179,6 +183,12 @@ class ReservationRepository:
                 ReservationModel.user_id == user_id,
                 ReservationModel.status == ReservationStatusEnum.ACTIVE
             )
+        ).order_by(ReservationModel.start_time).all()
+    
+    def get_active_reservations(self) -> List[ReservationModel]:
+        """Get all active reservations"""
+        return self.session.query(ReservationModel).filter(
+            ReservationModel.status == ReservationStatusEnum.ACTIVE
         ).order_by(ReservationModel.start_time).all()
     
     def get_by_user_and_time(self, user_id: str, tool_name: str, 
@@ -226,8 +236,12 @@ class ReservationRepository:
         """Update reservation time"""
         reservation = self.session.query(ReservationModel).get(reservation_id)
         if reservation:
-            reservation.start_time = start_time
-            reservation.end_time = end_time
+            # Convert timezone-aware datetimes to naive
+            start_time_naive = start_time.replace(tzinfo=None) if start_time.tzinfo else start_time
+            end_time_naive = end_time.replace(tzinfo=None) if end_time.tzinfo else end_time
+            
+            reservation.start_time = start_time_naive
+            reservation.end_time = end_time_naive
             reservation.formatted_time = formatted_time
             reservation.duration_hours = calculate_duration_hours(start_time, end_time)
             reservation.updated_at = datetime.utcnow()
@@ -238,12 +252,16 @@ class ReservationRepository:
                        end_time: datetime, 
                        exclude_reservation_id: Optional[int] = None) -> List[ReservationModel]:
         """Check for conflicting reservations"""
+        # Convert timezone-aware datetimes to naive for database comparison
+        start_time_naive = start_time.replace(tzinfo=None) if start_time.tzinfo else start_time
+        end_time_naive = end_time.replace(tzinfo=None) if end_time.tzinfo else end_time
+        
         query = self.session.query(ReservationModel).filter(
             and_(
                 ReservationModel.tool_name == tool_name,
                 ReservationModel.status == ReservationStatusEnum.ACTIVE,
-                ReservationModel.start_time < end_time,
-                ReservationModel.end_time > start_time
+                ReservationModel.start_time < end_time_naive,
+                ReservationModel.end_time > start_time_naive
             )
         )
         
