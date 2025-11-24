@@ -237,6 +237,7 @@ class AdminPanel(commands.Cog):
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
             res_repo = ReservationRepository(session)
+            history_repo = ReservationHistoryRepository(session)
             
             # Check if tool exists
             tool_obj = tool_repo.get_by_name(tool)
@@ -247,21 +248,26 @@ class AdminPanel(commands.Cog):
                 )
                 return
             
-            # Check for active reservations
-            active_reservations = res_repo.get_active_for_tool(tool)
-            if active_reservations:
-                await interaction.response.send_message(
-                    f"Cannot remove `{tool}` - it has {len(active_reservations)} active reservation(s). "
-                    "Clear reservations first.",
-                    ephemeral=True
-                )
-                return
+            # Get all reservations (active and admin blocks)
+            all_reservations = res_repo.get_active_for_tool(tool)
+            
+            if all_reservations:
+                # Archive all reservations to history before deletion
+                for reservation in all_reservations:
+                    history_repo.archive_reservation(reservation)
+                    session.delete(reservation)
+                
+                logger.info(f"Archived {len(all_reservations)} reservations before removing tool {tool}")
             
             # Delete tool
             tool_repo.delete(tool)
             session.commit()
             
-            await interaction.response.send_message(f"Tool `{tool}` has been removed.")
+            msg = f"Tool `{tool}` has been removed."
+            if all_reservations:
+                msg += f" ({len(all_reservations)} reservation(s) were archived)"
+            
+            await interaction.response.send_message(msg)
             logger.info(f"Admin {interaction.user.name} removed tool: {tool}")
 
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
