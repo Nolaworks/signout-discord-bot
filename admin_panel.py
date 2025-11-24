@@ -250,22 +250,31 @@ class AdminPanel(commands.Cog):
             
             # Get all reservations (active and admin blocks)
             all_reservations = res_repo.get_active_for_tool(tool)
+            reservation_count = len(all_reservations)
             
             if all_reservations:
                 # Archive all reservations to history before deletion
                 for reservation in all_reservations:
                     history_repo.archive_reservation(reservation)
-                    session.delete(reservation)
                 
-                logger.info(f"Archived {len(all_reservations)} reservations before removing tool {tool}")
+                # Commit the history records first
+                session.commit()
+                
+                # Now delete reservations using direct SQL to avoid FK constraint issues
+                from database import ReservationModel
+                session.query(ReservationModel).filter(
+                    ReservationModel.tool_id == tool_obj.id
+                ).delete(synchronize_session=False)
+                
+                logger.info(f"Archived and deleted {reservation_count} reservations before removing tool {tool}")
             
             # Delete tool
             tool_repo.delete(tool)
             session.commit()
             
             msg = f"Tool `{tool}` has been removed."
-            if all_reservations:
-                msg += f" ({len(all_reservations)} reservation(s) were archived)"
+            if reservation_count:
+                msg += f" ({reservation_count} reservation(s) were archived)"
             
             await interaction.response.send_message(msg)
             logger.info(f"Admin {interaction.user.name} removed tool: {tool}")
