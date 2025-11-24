@@ -225,7 +225,7 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             await interaction.response.send_message(
-                f"✅ Tool `{tool}` has been added with max time {max_hours}h."
+                f"Tool `{tool}` has been added with max time {max_hours}h."
             )
             logger.info(f"Admin {interaction.user.name} added tool: {tool}")
 
@@ -261,7 +261,7 @@ class AdminPanel(commands.Cog):
             tool_repo.delete(tool)
             session.commit()
             
-            await interaction.response.send_message(f"✅ Tool `{tool}` has been removed.")
+            await interaction.response.send_message(f"Tool `{tool}` has been removed.")
             logger.info(f"Admin {interaction.user.name} removed tool: {tool}")
 
     @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
@@ -295,7 +295,7 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             await interaction.response.send_message(
-                f"✅ Maximum signout time for `{tool_name}` set to {hours} hours."
+                f"Maximum signout time for `{tool_name}` set to {hours} hours."
             )
             logger.info(f"Admin {interaction.user.name} set max time for {tool_name}: {hours}h")
 
@@ -334,7 +334,7 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             await interaction.response.send_message(
-                f"✅ Cleared {len(reservations)} reservation(s) for `{tool_name}`."
+                f"Cleared {len(reservations)} reservation(s) for `{tool_name}`."
             )
             logger.info(f"Admin {interaction.user.name} cleared {len(reservations)} reservations for {tool_name}")
 
@@ -373,7 +373,7 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             await interaction.response.send_message(
-                f"✅ Force returned `{tool_name}` (was reserved by {res.username})."
+                f"Force returned `{tool_name}` (was reserved by {res.username})."
             )
             logger.info(f"Admin {interaction.user.name} force returned {tool_name} from {res.username}")
 
@@ -553,15 +553,61 @@ class AdminPanel(commands.Cog):
             logger.info(f"Updated reservation: {res.username} - {tool_name} - {old_time} -> {new_range}")
 
     # ========== Admin Block Commands ==========
+    
+    async def tool_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete for tool selection in adblock"""
+        try:
+            with get_db_session() as session:
+                tool_repo = ToolRepository(session)
+                tools = tool_repo.get_all()
+                
+                choices = [app_commands.Choice(name="[All Tools]", value="__ALL__")]
+                
+                for tool in tools:
+                    if current.lower() in tool.name.lower():
+                        choices.append(app_commands.Choice(name=tool.name, value=tool.name))
+                
+                return choices[:25]  # Discord limit
+        except Exception as e:
+            logger.error(f"Error in tool_autocomplete: {e}")
+            return []
+    
+    async def admin_block_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete for admin block selection in adunblock"""
+        try:
+            with get_db_session() as session:
+                res_repo = ReservationRepository(session)
+                tool_repo = ToolRepository(session)
+                
+                tools = tool_repo.get_all()
+                choices = []
+                
+                for tool in tools:
+                    reservations = res_repo.get_active_for_tool(tool.name)
+                    admin_blocks = [r for r in reservations if r.status == ReservationStatusEnum.ADMIN_BLOCK]
+                    
+                    for block in admin_blocks:
+                        display = f"{tool.name}: {block.formatted_time}"
+                        value = f"{tool.name}|{block.formatted_time}"
+                        
+                        if current.lower() in display.lower():
+                            choices.append(app_commands.Choice(name=display[:100], value=value[:100]))
+                
+                return choices[:25]  # Discord limit
+        except Exception as e:
+            logger.error(f"Error in admin_block_autocomplete: {e}")
+            return []
 
-    @app_commands.command(name="adblock", description="Admin: Block all currently-free tools for a time range")
+    @app_commands.command(name="adblock", description="Admin: Block tool(s) for a time range")
     @app_commands.describe(
+        tool="Select tool to block, or [All Tools]",
         time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
         force="If true, override overlapping future reservations by trimming/canceling"
     )
+    @app_commands.autocomplete(tool=tool_autocomplete)
     @is_admin_check()
-    async def admin_block_all(self, interaction: discord.Interaction, time: str, force: bool = False):
-        """Apply an admin block to all tools that are not currently active"""
+    async def admin_block_all(self, interaction: discord.Interaction, tool: str, time: str, force: bool = False):
+        """Apply an admin block to selected tool(s)"""
         await interaction.response.defer(thinking=True)
         
         # Parse time with GPT
@@ -596,8 +642,17 @@ class AdminPanel(commands.Cog):
             )
             session.flush()  # Ensure user is in database before creating reservations
             
-            tools = tool_repo.get_all()
-            if not tools:
+            # Determine which tools to block
+            if tool == "__ALL__":
+                tools_to_block = tool_repo.get_all()
+            else:
+                single_tool = tool_repo.get_by_name(tool)
+                if not single_tool:
+                    await interaction.followup.send(f"Tool '{tool}' not found.", ephemeral=True)
+                    return
+                tools_to_block = [single_tool]
+            
+            if not tools_to_block:
                 await interaction.followup.send("No tools found to block.", ephemeral=True)
                 return
             
@@ -606,20 +661,20 @@ class AdminPanel(commands.Cog):
             skipped_overlap = []
             modified = []
             
-            for tool in tools:
+            for tool_item in tools_to_block:
                 # Check if tool is currently active
-                reservations = res_repo.get_active_for_tool(tool.name)
+                reservations = res_repo.get_active_for_tool(tool_item.name)
                 currently_active = any(r.start_time <= now_naive < r.end_time for r in reservations)
                 
                 if currently_active:
-                    skipped_active.append(tool.name)
+                    skipped_active.append(tool_item.name)
                     continue
                 
                 # Check for overlapping reservations
-                conflicts = res_repo.check_conflicts(tool.name, block_start, block_end)
+                conflicts = res_repo.check_conflicts(tool_item.name, block_start, block_end)
                 
                 if conflicts and not force:
-                    skipped_overlap.append(tool.name)
+                    skipped_overlap.append(tool_item.name)
                     continue
                 
                 # If force, handle conflicts
@@ -647,27 +702,27 @@ class AdminPanel(commands.Cog):
                             history_repo.archive_reservation(conflict)
                             session.delete(conflict)
                     
-                    modified.append(tool.name)
+                    modified.append(tool_item.name)
                 
                 # Create admin block
                 res_repo.create(
                     user_id="admin",
                     username="admin-block",
-                    tool_name=tool.name,
+                    tool_name=tool_item.name,
                     start_time=block_start,
                     end_time=block_end,
                     original_text=time,
                     formatted_time=formatted_time,
                     status=ReservationStatusEnum.ADMIN_BLOCK
                 )
-                blocked_tools.append(tool.name)
+                blocked_tools.append(tool_item.name)
             
             session.commit()
             
             # Build response
             parts = []
             if blocked_tools:
-                parts.append(f"✅ Blocked: {', '.join(blocked_tools)}")
+                parts.append(f"Blocked: {', '.join(blocked_tools)}")
             if skipped_active:
                 parts.append(f"⏭️ Skipped (in use): {', '.join(skipped_active)}")
             if skipped_overlap:
@@ -684,63 +739,47 @@ class AdminPanel(commands.Cog):
             
             logger.info(f"Admin {interaction.user.name} created admin block: {formatted_time}")
 
-    @app_commands.command(name="adunblock", description="Admin: Remove admin blocks overlapping a time range")
-    @app_commands.describe(time="Time range to unblock (e.g. 'now to 2pm')")
+    @app_commands.command(name="adunblock", description="Admin: Remove selected admin block(s)")
+    @app_commands.describe(block="Select admin block to remove")
+    @app_commands.autocomplete(block=admin_block_autocomplete)
     @is_admin_check()
-    async def admin_unblock_all(self, interaction: discord.Interaction, time: str):
-        """Remove admin blocks that overlap the given window"""
+    async def admin_unblock_all(self, interaction: discord.Interaction, block: str):
+        """Remove selected admin block"""
         await interaction.response.defer(thinking=True)
         
-        # Parse time with GPT
-        formatted_time = await parse_time_with_gpt(time)
-        if not formatted_time:
-            await interaction.followup.send(
-                "Couldn't interpret time range. Try being more specific.",
-                ephemeral=True
-            )
-            return
-        
+        # Parse the block selection (format: "tool_name|formatted_time")
         try:
-            unblock_start, unblock_end = parse_time_range(formatted_time, CENTRAL_TZ)
-        except Exception:
-            await interaction.followup.send("Parsed time range appears invalid.", ephemeral=True)
+            tool_name, formatted_time = block.split("|", 1)
+        except ValueError:
+            await interaction.followup.send("Invalid block selection.", ephemeral=True)
             return
         
         with get_db_session() as session:
-            tool_repo = ToolRepository(session)
             res_repo = ReservationRepository(session)
             
-            tools = tool_repo.get_all()
-            changed_tools = []
+            # Find the specific admin block
+            reservations = res_repo.get_active_for_tool(tool_name)
+            admin_blocks = [r for r in reservations 
+                          if r.status == ReservationStatusEnum.ADMIN_BLOCK 
+                          and r.formatted_time == formatted_time]
             
-            for tool in tools:
-                reservations = res_repo.get_active_for_tool(tool.name)
-                removed = 0
-                
-                for res in reservations:
-                    if res.status != ReservationStatusEnum.ADMIN_BLOCK:
-                        continue
-                    
-                    # Check if overlaps
-                    if check_overlap(unblock_start, unblock_end, res.start_time, res.end_time):
-                        session.delete(res)
-                        removed += 1
-                
-                if removed > 0:
-                    changed_tools.append(f"{tool.name} (-{removed})")
+            if not admin_blocks:
+                await interaction.followup.send(
+                    f"No admin block found for {tool_name} at {formatted_time}",
+                    ephemeral=True
+                )
+                return
+            
+            # Delete the block
+            for block_res in admin_blocks:
+                session.delete(block_res)
             
             session.commit()
             
-            if changed_tools:
-                await interaction.followup.send(
-                    f"✅ Removed admin blocks from: {', '.join(changed_tools)}\n**Window:** `{formatted_time}`"
-                )
-                logger.info(f"Admin {interaction.user.name} removed admin blocks: {formatted_time}")
-            else:
-                await interaction.followup.send(
-                    "No admin-block entries overlapped the given window.",
-                    ephemeral=True
-                )
+            await interaction.followup.send(
+                f"✅ Removed admin block from **{tool_name}** at `{formatted_time}`"
+            )
+            logger.info(f"Admin {interaction.user.name} removed admin block: {tool_name} - {formatted_time}")
 
     @app_commands.command(name="listblocks", description="Admin: Show active/upcoming admin blocks per tool")
     @is_admin_check()

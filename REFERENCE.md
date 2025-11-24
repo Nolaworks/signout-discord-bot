@@ -259,4 +259,4 @@ psql -U botuser -d signout_bot -c "VACUUM ANALYZE;"
 
 **Remember:** Old code is backed up as `*_old.py` files. You can always rollback if needed!
 
-**Status:** ✅ Ready for Production
+**Status:** Ready for Production

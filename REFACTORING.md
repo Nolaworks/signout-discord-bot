@@ -4,7 +4,7 @@
 
 This document outlines the refactoring work completed to improve code quality, remove redundancy, and prepare for PostgreSQL database migration.
 
-## Phase 1: Code Refactoring ✅ COMPLETED
+## Phase 1: Code Refactoring COMPLETED
 
 ### New File Structure
 
@@ -73,7 +73,7 @@ signout-discord-bot/
 - Reusable across commands
 - Cleaner command files
 
-## Phase 2: Database Schema Design ✅ COMPLETED
+## Phase 2: Database Schema Design COMPLETED
 
 ### Database Models
 

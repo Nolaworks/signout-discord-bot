@@ -464,7 +464,7 @@ async def on_ready():
             logger.info("Starting cleanup task...")
             clean_expired_signouts.start()
         
-        logger.info(f"✅ Bot ready! Logged in as {bot.user}")
+        logger.info(f"Bot ready! Logged in as {bot.user}")
         logger.info(f"Connected to {len(bot.guilds)} guild(s)")
     except Exception as e:
         logger.error(f"Error during bot startup: {e}", exc_info=True)
