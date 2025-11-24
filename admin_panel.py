@@ -299,10 +299,10 @@ class AdminPanel(commands.Cog):
                 # Commit the history records
                 session.commit()
                 
-                # Now delete reservations using direct SQL
+                # Now delete reservations using direct SQL (use tool_name to catch old migrated data)
                 from database import ReservationModel
                 session.query(ReservationModel).filter(
-                    ReservationModel.tool_id == tool_obj.id
+                    ReservationModel.tool_name == tool
                 ).delete(synchronize_session=False)
                 
                 logger.info(f"Archived and deleted {reservation_count} reservations before removing tool {tool}")
