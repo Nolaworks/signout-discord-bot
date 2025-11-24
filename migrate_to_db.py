@@ -164,9 +164,11 @@ def migrate_history_csv():
                         
                         # Ensure user exists
                         user = user_repo.get_or_create(user_id=user_id, username=username)
+                        session.flush()  # Ensure user is committed before moving on
                         
                         # Ensure tool exists
                         tool = tool_repo.get_or_create(name=tool_name)
+                        session.flush()  # Ensure tool is committed before moving on
                         
                         # Create history record directly
                         from database import ReservationHistoryModel
