@@ -1,0 +1,20 @@
+{
+    "tools": {
+        "potato": {
+            "max_time": 168,
+            "reservations": []
+        },
+        "1": {
+            "max_time": 168,
+            "reservations": []
+        },
+        "2": {
+            "max_time": 168,
+            "reservations": []
+        },
+        "3": {
+            "max_time": 168,
+            "reservations": []
+        }
+    }
+}

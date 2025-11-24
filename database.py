@@ -250,3 +250,85 @@ class UserToolStatisticsModel(Base):
     
     def __repr__(self):
         return f"<UserToolStats(user={self.username}, tool={self.tool_name}, count={self.total_reservations})>"
+
+
+class NotificationPreferencesModel(Base):
+    """User notification preferences"""
+    __tablename__ = "notification_preferences"
+    
+    user_id = Column(String(50), primary_key=True, index=True)
+    
+    # Notification toggles
+    reminder_enabled = Column(Boolean, default=True)
+    expiration_warning_enabled = Column(Boolean, default=True)
+    waitlist_alerts_enabled = Column(Boolean, default=True)
+    
+    # Timing preferences
+    reminder_minutes_before = Column(Integer, default=15)
+    expiration_minutes_before = Column(Integer, default=15)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    def __repr__(self):
+        return f"<NotificationPreferences(user_id={self.user_id})>"
+
+
+class WaitlistModel(Base):
+    """Tool waitlist for notifications when tools become available"""
+    __tablename__ = "waitlist"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), ForeignKey('users.user_id'), nullable=False, index=True)
+    tool_id = Column(Integer, ForeignKey('tools.id'), nullable=False, index=True)
+    
+    # Metadata
+    username = Column(String(100), nullable=False)
+    tool_name = Column(String(100), nullable=False)
+    
+    # Status tracking
+    notified_at = Column(DateTime)
+    expired_at = Column(DateTime)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("UserModel", foreign_keys=[user_id])
+    tool = relationship("ToolModel", foreign_keys=[tool_id])
+    
+    __table_args__ = (
+        Index('idx_waitlist_active', 'tool_id', 'notified_at'),
+    )
+    
+    def __repr__(self):
+        return f"<Waitlist(user={self.username}, tool={self.tool_name})>"
+
+
+class NotificationLogModel(Base):
+    """Log of sent notifications for tracking and debugging"""
+    __tablename__ = "notification_log"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), nullable=False, index=True)
+    notification_type = Column(String(50), nullable=False)  # 'reminder', 'expiration', 'waitlist', 'admin_summary'
+    
+    # Context
+    tool_name = Column(String(100))
+    reservation_id = Column(Integer)
+    message_sent = Column(Text)
+    
+    # Status
+    success = Column(Boolean, default=True)
+    error_message = Column(Text)
+    
+    # Timestamp
+    sent_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    __table_args__ = (
+        Index('idx_notification_log_type', 'notification_type', 'sent_at'),
+    )
+    
+    def __repr__(self):
+        return f"<NotificationLog(type={self.notification_type}, user={self.user_id})>"

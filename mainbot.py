@@ -22,6 +22,7 @@ from validation import validate_time_input, validate_comment
 from exceptions import InvalidToolChannelError, ReservationConflictError
 from autocomplete import reservation_autocomplete
 from admin_panel import AdminPanel
+from notifications import NotificationManager
 
 # Load configuration
 config = get_config()
@@ -41,6 +42,9 @@ logger = logging.getLogger(__name__)
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=config.command_prefix, intents=intents)
+
+# Initialize notification manager (will be set after bot is ready)
+notification_manager = None
 
 
 @tasks.loop(minutes=config.cleanup_interval_minutes)
@@ -75,6 +79,54 @@ async def clean_expired_signouts():
         logger.error(f"Error cleaning expired signouts: {e}", exc_info=True)
 
 
+@tasks.loop(minutes=1)
+async def notification_check_task():
+    """Background task to check for notifications (runs every minute)"""
+    global notification_manager
+    if not notification_manager:
+        logger.warning("Notification manager not initialized yet")
+        return
+    
+    try:
+        logger.debug("Running notification check task...")
+        with get_db_session() as session:
+            # Check for upcoming reservations (reminders)
+            await notification_manager.check_upcoming_reservations(session)
+            
+            # Check for expiring reservations (warnings)
+            await notification_manager.check_expiring_reservations(session)
+            
+            # Check for tool availability (waitlist)
+            await notification_manager.check_tool_availability(session)
+            
+            session.commit()
+        logger.debug("Notification check task completed")
+    except Exception as e:
+        logger.error(f"Error in notification check task: {e}", exc_info=True)
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Handle application command errors"""
+    if isinstance(error, app_commands.CommandOnCooldown):
+        await interaction.response.send_message(
+            f"This command is on cooldown. Try again in {error.retry_after:.1f} seconds.",
+            ephemeral=True
+        )
+    elif isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message(
+            "You don't have permission to use this command.",
+            ephemeral=True
+        )
+    else:
+        logger.error(f"Command error: {error}", exc_info=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"An error occurred: {error}",
+                ephemeral=True
+            )
+
+
 @bot.event
 async def on_message(message):
     """Handle messages in signout channels"""
@@ -90,6 +142,194 @@ async def on_message(message):
             )
             await asyncio.sleep(5)
             await message.delete()
+
+
+# ========== Notification and Waitlist Commands ==========
+
+@bot.tree.command(name="notifyprefs", description="Manage your notification preferences")
+@app_commands.describe(
+    reminders="Enable/disable pre-reservation reminders",
+    warnings="Enable/disable expiration warnings",
+    waitlist="Enable/disable waitlist alerts"
+)
+async def notification_preferences(
+    interaction: discord.Interaction,
+    reminders: bool = None,
+    warnings: bool = None,
+    waitlist: bool = None
+):
+    """Manage notification preferences"""
+    user_id = get_user_id(interaction.user)
+    
+    with get_db_session() as session:
+        prefs = notification_manager.get_preferences(session, user_id)
+        
+        # Update preferences if provided
+        updates = {}
+        if reminders is not None:
+            updates['reminder_enabled'] = reminders
+        if warnings is not None:
+            updates['expiration_warning_enabled'] = warnings
+        if waitlist is not None:
+            updates['waitlist_alerts_enabled'] = waitlist
+        
+        if updates:
+            notification_manager.update_preferences(session, user_id, **updates)
+            session.commit()
+        
+        # Show current settings
+        embed = discord.Embed(
+            title="Notification Preferences",
+            description="Your current notification settings:",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="Pre-Reservation Reminders",
+            value="Enabled" if prefs.reminder_enabled else "Disabled",
+            inline=False
+        )
+        embed.add_field(
+            name="Expiration Warnings",
+            value="Enabled" if prefs.expiration_warning_enabled else "Disabled",
+            inline=False
+        )
+        embed.add_field(
+            name="Waitlist Alerts",
+            value="Enabled" if prefs.waitlist_alerts_enabled else "Disabled",
+            inline=False
+        )
+        embed.set_footer(text="Use /notifyprefs to change settings")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+
+
+async def waitlist_action_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete for waitlist actions"""
+    actions = ['add', 'remove']
+    return [
+        app_commands.Choice(name=action.capitalize(), value=action)
+        for action in actions
+        if current.lower() in action.lower()
+    ]
+
+
+@bot.tree.command(name="waitlist", description="Join/leave waitlist for this tool")
+@app_commands.describe(action="Add yourself to waitlist or remove yourself")
+@app_commands.autocomplete(action=waitlist_action_autocomplete)
+async def waitlist_command(interaction: discord.Interaction, action: str):
+    """Manage waitlist for a tool"""
+    # Validate channel
+    try:
+        tool_name = get_tool_from_channel_or_error(interaction.channel)
+    except InvalidToolChannelError as e:
+        await interaction.response.send_message(e.user_message, ephemeral=True)
+        return
+    
+    user_id = get_user_id(interaction.user)
+    username = interaction.user.name
+    
+    with get_db_session() as session:
+        tool_repo = ToolRepository(session)
+        tool = tool_repo.get_by_name(tool_name)
+        
+        if not tool:
+            await interaction.response.send_message(
+                f"Tool `{tool_name}` not found in database.",
+                ephemeral=True
+            )
+            return
+        
+        if action.lower() in ['add', 'join']:
+            # Add to waitlist
+            waitlist_entry = notification_manager.add_to_waitlist(
+                session, user_id, username, tool.id, tool_name
+            )
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"Added to waitlist for **{tool_name}**. You'll be notified when it becomes available!",
+                ephemeral=True
+            )
+        
+        elif action.lower() in ['remove', 'leave']:
+            # Remove from waitlist
+            removed = notification_manager.remove_from_waitlist(session, user_id, tool.id)
+            session.commit()
+            
+            if removed:
+                await interaction.response.send_message(
+                    f"Removed from waitlist for **{tool_name}**.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"You're not on the waitlist for **{tool_name}**.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.response.send_message(
+                "Invalid action. Use 'add' or 'remove'.",
+                ephemeral=True
+            )
+
+
+@bot.tree.command(name="mywaitlist", description="View all tools you're waiting for")
+async def my_waitlist(interaction: discord.Interaction):
+    """View user's waitlist"""
+    user_id = get_user_id(interaction.user)
+    
+    with get_db_session() as session:
+        waitlist_entries = notification_manager.get_user_waitlist(session, user_id)
+        
+        if not waitlist_entries:
+            await interaction.response.send_message(
+                "You're not on any waitlists.",
+                ephemeral=True
+            )
+            return
+        
+        embed = discord.Embed(
+            title="Your Waitlist",
+            description=f"You're waiting for {len(waitlist_entries)} tool(s):",
+            color=discord.Color.blue()
+        )
+        
+        for entry in waitlist_entries:
+            embed.add_field(
+                name=entry.tool_name,
+                value=f"Added {entry.created_at.strftime('%m/%d at %I:%M %p')}",
+                inline=False
+            )
+        
+        embed.set_footer(text="Use /waitlist action:remove in tool channels to leave waitlist")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="adminsummary", description="[ADMIN] Manually send the daily notification summary")
+async def admin_summary(interaction: discord.Interaction):
+    """Manually trigger the daily admin notification summary (admin only)"""
+    if not user_is_admin(interaction.user):
+        await interaction.response.send_message(
+            "This command is restricted to administrators.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    with get_db_session() as session:
+        await notification_manager.send_daily_admin_summary(session)
+    
+    await interaction.followup.send(
+        "Daily notification summary has been sent!",
+        ephemeral=True
+    )
 
 
 @bot.tree.command(name="help", description="How to use the signout system")
@@ -160,6 +400,7 @@ async def help_cmd(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
+@app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
 async def reservations(interaction: discord.Interaction):
     """Display all active reservations for the current tool"""
     await interaction.response.defer(thinking=True)
@@ -193,12 +434,25 @@ async def reservations(interaction: discord.Interaction):
     time="Example: 'now for 2 hours' or '3pm to 5pm'",
     photo="Required in Tool Room: photo of the tool at signout"
 )
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
 async def signout(interaction: discord.Interaction, time: str, photo: discord.Attachment | None = None):
     """Create a new tool reservation"""
     # Validate photo requirement
     is_valid, error_msg = validate_photo_requirement(interaction.channel, photo)
     if not is_valid:
-        await interaction.response.send_message(error_msg, ephemeral=True)
+        # Provide helpful message with copyable command
+        command_text = f"/signout time:{time} photo:[attach image here]"
+        
+        await interaction.response.send_message(
+            f"{error_msg}\n\n"
+            f"**Copy this command and add your photo:**\n"
+            f"```\n{command_text}\n```\n"
+            f"1. Copy the command above (click to select all)\n"
+            f"2. Paste it in the message field\n"
+            f"3. Click the `photo:` field and attach your image\n"
+            f"4. Press Enter to submit",
+            ephemeral=True
+        )
         return
     
     # Validate channel
@@ -324,12 +578,25 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
     photo="Required in Tool Room: photo of the tool at return"
 )
 @app_commands.autocomplete(reservation=reservation_autocomplete)
+@app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
 async def tool_return(interaction: discord.Interaction, reservation: str, photo: discord.Attachment | None = None):
     """Return a tool reservation"""
     # Validate photo requirement
     is_valid, error_msg = validate_photo_requirement(interaction.channel, photo)
     if not is_valid:
-        await interaction.response.send_message(error_msg, ephemeral=True)
+        # Provide helpful message with copyable command
+        command_text = f"/returntool reservation:{reservation} photo:[attach image here]"
+        
+        await interaction.response.send_message(
+            f"{error_msg}\n\n"
+            f"**Copy this command and add your photo:**\n"
+            f"```\n{command_text}\n```\n"
+            f"1. Copy the command above (click to select all)\n"
+            f"2. Paste it in the message field\n"
+            f"3. Click the `photo:` field and attach your image\n"
+            f"4. Press Enter to submit",
+            ephemeral=True
+        )
         return
     
     # Validate channel
@@ -387,6 +654,7 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
 
 @bot.tree.command(name="comment", description="Leave a comment in this channel")
 @app_commands.describe(comment="Your comment")
+@app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
 async def comment(interaction: discord.Interaction, comment: str):
     """Post a comment in a signout channel"""
     if not interaction.channel.name.startswith("signout-"):
@@ -449,20 +717,39 @@ async def on_guild_channel_create(channel):
 @bot.event
 async def on_ready():
     """Bot startup event"""
+    global notification_manager
+    
     try:
         logger.info("Initializing database...")
         init_database()
+        
+        logger.info("Initializing notification manager...")
+        notification_manager = NotificationManager(bot)
         
         logger.info("Loading admin panel...")
         await bot.add_cog(AdminPanel(bot))
         
         logger.info("Syncing command tree...")
+        # Sync globally
         await bot.tree.sync()
+        
+        # Also sync to each guild for immediate updates
+        for guild in bot.guilds:
+            try:
+                await bot.tree.sync(guild=guild)
+                logger.info(f"Synced commands to guild: {guild.name} ({guild.id})")
+            except Exception as e:
+                logger.error(f"Failed to sync to guild {guild.name}: {e}")
+        
         logger.info(f"Commands synced: {len(bot.tree.get_commands())} commands available.")
         
         if not clean_expired_signouts.is_running():
             logger.info("Starting cleanup task...")
             clean_expired_signouts.start()
+        
+        if not notification_check_task.is_running():
+            logger.info("Starting notification task...")
+            notification_check_task.start()
         
         logger.info(f"Bot ready! Logged in as {bot.user}")
         logger.info(f"Connected to {len(bot.guilds)} guild(s)")

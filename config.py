@@ -63,9 +63,10 @@ class BotConfig:
 def load_config() -> BotConfig:
     """Load configuration from environment variables"""
     # Get required variables
+    # NOTE: Using TEST_DISCORD_TOKEN for now (production will use DISCORD_TOKEN)
     discord_token = os.getenv("TEST_DISCORD_TOKEN") or os.getenv("DISCORD_TOKEN")
     if not discord_token:
-        raise ValueError("DISCORD_TOKEN or TEST_DISCORD_TOKEN environment variable is required")
+        raise ValueError("TEST_DISCORD_TOKEN or DISCORD_TOKEN environment variable is required")
     
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:

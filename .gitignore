@@ -10,3 +10,4 @@ __pycache__
 .wget-hsts
 tools.json
 history.csv
+.bot-*
