@@ -586,6 +586,15 @@ class AdminPanel(commands.Cog):
             tool_repo = ToolRepository(session)
             res_repo = ReservationRepository(session)
             history_repo = ReservationHistoryRepository(session)
+            user_repo = UserRepository(session)
+            
+            # Ensure admin user exists for admin blocks
+            admin_user = user_repo.get_or_create(
+                user_id="admin",
+                username="admin-block",
+                is_admin=True
+            )
+            session.flush()  # Ensure user is in database before creating reservations
             
             tools = tool_repo.get_all()
             if not tools:
