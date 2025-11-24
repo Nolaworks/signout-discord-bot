@@ -6,6 +6,7 @@ import os
 import io
 import logging
 import asyncio
+import pytz
 from collections import deque
 from typing import Optional, List
 from datetime import datetime
@@ -579,6 +580,7 @@ class AdminPanel(commands.Cog):
             return
         
         now = get_now(CENTRAL_TZ)
+        now_naive = now.astimezone(pytz.UTC).replace(tzinfo=None)  # Convert to naive UTC for comparison
         
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
@@ -598,7 +600,7 @@ class AdminPanel(commands.Cog):
             for tool in tools:
                 # Check if tool is currently active
                 reservations = res_repo.get_active_for_tool(tool.name)
-                currently_active = any(r.start_time <= now < r.end_time for r in reservations)
+                currently_active = any(r.start_time <= now_naive < r.end_time for r in reservations)
                 
                 if currently_active:
                     skipped_active.append(tool.name)
