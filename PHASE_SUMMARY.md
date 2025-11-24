@@ -17,7 +17,7 @@
 - Error handling with user-friendly messages
 - Transaction rollback on failures
 
-### ⚠️ Quick Wins Needed (1-2 hours)
+###  Quick Wins Needed (1-2 hours)
 1. **Automated Backups** - Add cron job for pg_dump
 2. **Rate Limiting** - Add cooldown decorators to commands
 3. **Token Cleanup** - Remove TEST_DISCORD_TOKEN, use DISCORD_TOKEN
@@ -35,7 +35,7 @@
 
 ### Priority Features
 
-**Week 1: Notification System** 🔔
+**Week 1: Notification System** 
 - Pre-reservation reminders (15 min before start)
 - Expiration warnings (15 min before end)
 - Waitlist system (notify when tool available)

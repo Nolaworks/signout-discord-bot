@@ -410,10 +410,10 @@ async def test_notify(interaction: discord.Interaction):
             status = ""
             if upcoming_window_start <= res.start_time < upcoming_window_end:
                 upcoming_count += 1
-                status = "🔔 Will send START reminder"
+                status = " Will send START reminder"
             elif expiring_window_start <= res.end_time < expiring_window_end:
                 expiring_count += 1
-                status = "⚠️ Will send END warning"
+                status = " Will send END warning"
             else:
                 if time_to_start > 0:
                     status = f"Starts in {int(time_to_start)} min (no notification yet)"
@@ -475,63 +475,246 @@ async def help_cmd(interaction: discord.Interaction):
     tool_name = extract_tool_from_channel(ch) if in_signout_ch else None
     is_tool_room = is_tool_room_channel(ch)
     
-    lines = []
+    embed = discord.Embed(
+        title=" Signout System Help",
+        description="Reserve and manage tool signouts with ease!",
+        color=discord.Color.blue()
+    )
     
+    # Channel context
     if in_signout_ch and tool_name:
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
             tool = tool_repo.get_by_name(tool_name)
             max_time = tool.max_time_hours if tool else config.default_max_time_hours
         
-        lines.append(f"**Channel:** `#{ch.name}`  |  **Tool:** `{tool_name}`  |  **Max time:** `{max_time}h`")
-        if is_tool_room:
-            lines.append("**Tool Room rule:** A photo is required for signout and return.")
+        photo_note = (
+            "\n\n**Tool Room Channel**\n"
+            "This channel requires photos for all signouts and returns. "
+            "This helps track tool condition and accountability."
+        ) if is_tool_room else (
+            "\n\n**Photo Optional**\n"
+            "Photos are not required in this channel, but are encouraged "
+            "for documentation purposes."
+        )
+        
+        embed.add_field(
+            name=" Current Channel",
+            value=f"**Tool:** `{tool_name}`\n**Max time:** `{max_time}h`{photo_note}",
+            inline=False
+        )
     else:
-        lines.append("Use these commands inside a `#signout-<tool>` channel for tool-specific actions.")
+        embed.add_field(
+            name="Getting Started",
+            value="Use these commands inside a `#signout-<tool>` channel",
+            inline=False
+        )
     
     # User commands
-    lines.append("\n**User commands**")
-    lines.append("• `/signout time:<text> [photo]`  Reserve the tool for a time range.")
-    if is_tool_room:
-        lines.append("  - Photo is required here. Attach a picture of the tool at signout.")
-    lines.append("  - Examples: `now for 2 hours`, `3pm to 5pm`, `tomorrow 10:00-12:00`.")
-    lines.append("  - The parser normalizes your input to `MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM`.")
+    photo_req = (
+        "\n\n**Photo Required:** Must attach image when signing out\n"
+    ) if is_tool_room else (
+        "\n\nPhoto optional but recommended for documentation\n"
+    )
     
-    lines.append("• `/reservations`  List active reservations for this tool.")
+    embed.add_field(
+        name="Reserve a Tool",
+        value=(
+            "`/signout time:<text> [photo]`\n"
+            "Create a reservation for this tool.\n\n"
+            "**Time examples:**\n"
+            "• `now for 2 hours` - Start immediately\n"
+            "• `3pm to 5pm` - Today from 3pm-5pm\n"
+            "• `tomorrow 10-12` - Tomorrow 10am-12pm\n"
+            "• `friday 2pm-4pm` - Specific day and time"
+            + photo_req
+        ),
+        inline=False
+    )
     
-    lines.append("• `/returntool reservation:<pick> [photo]`  Return your reservation.")
-    if is_tool_room:
-        lines.append("  - Photo is required here. Attach a picture of the tool at return.")
-    lines.append("  - Start typing to autocomplete your reservation time.")
+    embed.add_field(
+        name="View Reservations",
+        value="`/reservations` - See all active reservations for this tool",
+        inline=False
+    )
     
-    lines.append("• `/comment comment:<text>`  Post a note to this channel.")
+    return_photo_req = (
+        "\n\n⚠️ **Photo Required:** Must attach image when returning\n"
+    ) if is_tool_room else (
+        "\n\n📷 Photo optional but recommended to show tool condition\n"
+    )
     
-    # Behavior and conflicts
-    lines.append("\n**Rules and behavior**")
-    lines.append("• Only slash commands are permitted in signout channels.")
-    lines.append("• Reservations must be a range and must not overlap existing reservations.")
-    lines.append("• If your request exceeds the max time for the tool, it is rejected.")
-    lines.append("• Expired reservations are auto-removed and logged to history.")
+    embed.add_field(
+        name="✅ Return a Tool",
+        value=(
+            "`/returntool reservation:<pick> [photo]`\n"
+            "Mark your reservation as complete and return the tool.\n\n"
+            "Start typing to autocomplete your reservation from the list."
+            + return_photo_req
+        ),
+        inline=False
+    )
     
-    # Admin commands (shown to admins only)
+    embed.add_field(
+        name="❌ Cancel a Reservation",
+        value=(
+            "`/cancel reservation:<pick>`\n"
+            "Cancel a reservation you no longer need.\n\n"
+            "This removes your reservation and allows others to book that time slot."
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💬 Post Comments",
+        value="`/comment comment:<text>` - Share notes with others",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Notifications",
+        value=(
+            "`/notifyprefs` - Configure your notification settings\n"
+            "`/waitlist action:<add|remove>` - Join waitlist for this tool\n"
+            "`/mywaitlist` - View your active waitlist entries"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Adjust Reservations",
+        value=(
+            "`/adjusttime` - Modify your existing reservation time\n\n"
+            "**Options:**\n"
+            "• `start` - Change only the start time (keep same end time)\n"
+            "• `end` - Change only the end time (keep same start time)\n"
+            "• `range` - Change both start and end times (new time range)\n\n"
+            "Example: `/adjusttime choice:start new_value:2pm` moves start to 2pm"
+        ),
+        inline=False
+    )
+    
+    # Rules
+    embed.add_field(
+        name="Rules",
+        value=(
+            "• Only slash commands allowed in signout channels\n"
+            "• Reservations cannot overlap existing ones\n"
+            "• Expired reservations are auto-archived\n"
+            "• Respect max time limits per tool"
+        ),
+        inline=False
+    )
+    
     if user_is_admin(interaction.user):
-        lines.append("\n**Admin commands**")
-        lines.append("• `/adjusttime old_time:<text> choice:<start|end|range> new_value:<text> [merge]`  Edit your reservation.")
-        lines.append("• `/adjusttime_admin user:<name> old_time:<text> choice:<start|end|range> new_value:<text> [merge]`  Edit another user.")
-        lines.append("• `/maxtime hours:<int>`  Set max hours for this tool.")
-        lines.append("• `/forcereturn`  Force return the current reservation.")
-        lines.append("• `/clearreservations`  Remove all reservations for this tool.")
-        lines.append("• `/adblock time:<range> [force]`  Block all tools for a time range.")
-        lines.append("• `/adunblock time:<range>`  Remove admin blocks in a time range.")
+        embed.add_field(
+            name="Admin",
+            value="Run `/adminhelp` for admin commands",
+            inline=False
+        )
     
-    # If not in a signout channel, add a quick start
-    if not in_signout_ch:
-        lines.append("\n**Quick start**")
-        lines.append("1) Go to a `#signout-<tool>` channel.")
-        lines.append("2) Run `/signout time:<range>` and attach a photo if you are in Tool Room.")
-        lines.append("3) When done, run `/returntool` and attach a photo if you are in Tool Room.")
+    embed.set_footer(text="Need more help? Contact an admin!")
     
-    await interaction.response.send_message("\n".join(lines))
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="adminhelp", description="[ADMIN] Admin command reference")
+@app_commands.default_permissions(administrator=True)
+async def admin_help_cmd(interaction: discord.Interaction):
+    """Display help information for admin commands"""
+    if not user_is_admin(interaction.user):
+        await interaction.response.send_message(
+            "This command is restricted to administrators.",
+            ephemeral=True
+        )
+        return
+    
+    embed = discord.Embed(
+        title="Admin Commands Reference",
+        description="Complete list of administrator commands",
+        color=discord.Color.gold()
+    )
+    
+    # Tool Management
+    embed.add_field(
+        name=" Tool Management",
+        value=(
+            "`/addtool tool:<name> [max_hours]` - Add a new tool\n"
+            "`/removetool tool:<name>` - Remove a tool\n"
+            "`/maxtime hours:<int>` - Set max hours for current tool"
+        ),
+        inline=False
+    )
+    
+    # Reservation Management
+    embed.add_field(
+        name="Reservation Management",
+        value=(
+            "`/clearreservations` - Clear all reservations for current tool\n"
+            "`/forcereturn` - Force return the current reservation\n\n"
+            "`/adjusttime_admin` - Edit another user's reservation\n"
+            "  • `user:<name>` - Select user from autocomplete\n"
+            "  • `old_time:<text>` - Select their reservation\n"
+            "  • `choice:<start|end|range>` - What to change:\n"
+            "    - `start`: Change start time only\n"
+            "    - `end`: Change end time only\n"
+            "    - `range`: Change entire time range\n"
+            "  • `new_value:<text>` - New time (e.g., '2pm' or '2pm-4pm')"
+        ),
+        inline=False
+    )
+    
+    # Admin Blocks
+    embed.add_field(
+        name="Admin Blocks",
+        value=(
+            "`/adblock tool:<name> time:<range> [force]` - Block tool(s)\n"
+            "  └ Use `[All Tools]` to block everything\n"
+            "`/adunblock block:<select>` - Remove an admin block\n"
+            "`/listblocks` - Show all active admin blocks"
+        ),
+        inline=False
+    )
+    
+    # Notifications
+    embed.add_field(
+        name=" Notifications",
+        value=(
+            "`/testnotify` - Test notification system\n"
+            "`/adminsummary` - Send daily summary to all admins"
+        ),
+        inline=False
+    )
+    
+    # Logging & Debugging
+    embed.add_field(
+        name="Logging & Debug",
+        value=(
+            "`/loglevel level:<DEBUG|INFO|WARNING|ERROR>` - Set log level\n"
+            "`/taillogs [lines]` - View recent log entries\n"
+            "`/watchlogs enable:<true|false>` - Stream logs to channel"
+        ),
+        inline=False
+    )
+    
+    # Tips
+    embed.add_field(
+        name="Admin Tips",
+        value=(
+            "• **Admin blocks** prevent users from reserving during that time\n"
+            "• Use `force:true` in `/adblock` to override existing reservations\n"
+            "• **Notifications** are sent 15 min before start/end of reservations\n"
+            "• **Tool Room channels** enforce photo requirements automatically\n"
+            "  - Bot rejects signout/return commands without photos\n"
+            "  - Regular channels make photos optional\n"
+            "• All admin actions are logged for auditing"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="All admin commands are restricted to users with Administrator permission")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="reservations", description="List reservations for the tool in this channel")
@@ -705,6 +888,52 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             await interaction.followup.send(message)
         
         logger.info(f"Created reservation: {username} - {tool_name} - {formatted_time}")
+
+
+@bot.tree.command(name="cancel", description="Cancel one of your reservations")
+@app_commands.describe(reservation="Select your reservation to cancel")
+@app_commands.autocomplete(reservation=reservation_autocomplete)
+@app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
+async def cancel_reservation(interaction: discord.Interaction, reservation: str):
+    """Cancel a tool reservation"""
+    # Validate channel
+    try:
+        tool_name = get_tool_from_channel_or_error(interaction.channel)
+    except InvalidToolChannelError as e:
+        await interaction.response.send_message(e.user_message, ephemeral=True)
+        return
+    
+    user_id = get_user_id(interaction.user)
+    display_name = get_user_display_name(interaction.user)
+    
+    with get_db_session() as session:
+        res_repo = ReservationRepository(session)
+        history_repo = ReservationHistoryRepository(session)
+        
+        # Find the reservation
+        res = res_repo.get_by_user_and_time(user_id, tool_name, reservation)
+        
+        if not res:
+            await interaction.response.send_message(
+                f"No active reservation matching '{reservation}' for {tool_name}.",
+                ephemeral=True
+            )
+            return
+        
+        # Archive to history
+        history_repo.archive_reservation(res)
+        
+        # Mark as cancelled
+        res.status = ReservationStatusEnum.CANCELLED
+        res.updated_at = datetime.now(timezone.utc)
+        
+        session.commit()
+        
+        await interaction.response.send_message(
+            f"{display_name} cancelled their reservation for **{tool_name}** — `{reservation}`"
+        )
+        
+        logger.info(f"Cancelled reservation: {res.username} - {tool_name} - {reservation}")
 
 
 @bot.tree.command(name="returntool", description="Return the currently signed-out tool")

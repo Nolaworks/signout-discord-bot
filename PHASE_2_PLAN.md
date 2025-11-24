@@ -14,7 +14,7 @@ Phase 2 focuses on user experience improvements and feature enhancements that pr
 
 ## 📋 Feature Breakdown
 
-### 1. Notification System 🔔
+### 1. Notification System 
 
 **Priority:** HIGH  
 **Estimated Time:** 1 week  
@@ -349,7 +349,7 @@ pip install pytesseract
 
 ---
 
-## ⚠️ Risk Assessment
+##  Risk Assessment
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
