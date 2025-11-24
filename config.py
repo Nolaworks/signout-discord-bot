@@ -14,12 +14,14 @@ load_dotenv()
 @dataclass
 class BotConfig:
     """Main bot configuration"""
-    # Discord settings
+    # Required fields (no defaults) - must come first
     discord_token: str
+    openai_api_key: str
+    
+    # Discord settings
     command_prefix: str = "!"
     
     # OpenAI settings
-    openai_api_key: str
     openai_model: str = "gpt-4o"
     openai_mini_model: str = "gpt-4o-mini"
     
