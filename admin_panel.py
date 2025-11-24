@@ -256,8 +256,10 @@ class AdminPanel(commands.Cog):
                 # Archive all reservations to history before deletion
                 for reservation in all_reservations:
                     history_repo.archive_reservation(reservation)
+                    # Expunge the reservation from session to prevent updates
+                    session.expunge(reservation)
                 
-                # Commit the history records first
+                # Commit the history records
                 session.commit()
                 
                 # Now delete reservations using direct SQL to avoid FK constraint issues
