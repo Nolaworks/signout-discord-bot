@@ -253,16 +253,53 @@ class AdminPanel(commands.Cog):
             reservation_count = len(all_reservations)
             
             if all_reservations:
-                # Archive all reservations to history before deletion
+                # Collect reservation data before expunging
+                reservation_data = []
                 for reservation in all_reservations:
-                    history_repo.archive_reservation(reservation)
-                    # Expunge the reservation from session to prevent updates
+                    reservation_data.append({
+                        'id': reservation.id,
+                        'user_id': reservation.user_id,
+                        'username': reservation.username,
+                        'tool_id': reservation.tool_id,
+                        'tool_name': reservation.tool_name,
+                        'start_time': reservation.start_time,
+                        'end_time': reservation.end_time,
+                        'original_text': reservation.original_text,
+                        'formatted_time': reservation.formatted_time,
+                        'status': reservation.status,
+                        'photo_url': reservation.photo_url,
+                        'duration_hours': reservation.duration_hours,
+                        'created_at': reservation.created_at,
+                        'returned_at': reservation.returned_at
+                    })
                     session.expunge(reservation)
+                
+                # Create history records from the data
+                from database import ReservationHistoryModel
+                for data in reservation_data:
+                    history = ReservationHistoryModel(
+                        reservation_id=data['id'],
+                        user_id=data['user_id'],
+                        username=data['username'],
+                        tool_id=data['tool_id'],
+                        tool_name=data['tool_name'],
+                        start_time=data['start_time'],
+                        end_time=data['end_time'],
+                        original_text=data['original_text'],
+                        formatted_time=data['formatted_time'],
+                        status=data['status'],
+                        photo_url=data['photo_url'],
+                        duration_hours=data['duration_hours'],
+                        created_at=data['created_at'],
+                        returned_at=data['returned_at'],
+                        archived_at=datetime.utcnow()
+                    )
+                    session.add(history)
                 
                 # Commit the history records
                 session.commit()
                 
-                # Now delete reservations using direct SQL to avoid FK constraint issues
+                # Now delete reservations using direct SQL
                 from database import ReservationModel
                 session.query(ReservationModel).filter(
                     ReservationModel.tool_id == tool_obj.id
