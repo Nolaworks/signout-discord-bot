@@ -2,6 +2,7 @@
 Custom exceptions for the Discord Tool Signout Bot.
 Provides better error handling and user feedback.
 """
+from typing import Optional
 
 
 class BotException(Exception):
