@@ -332,6 +332,49 @@ async def admin_summary(interaction: discord.Interaction):
     )
 
 
+@bot.tree.command(name="testnotify", description="[ADMIN] Test notification system with current reservations")
+async def test_notify(interaction: discord.Interaction):
+    """Manually trigger notification checks (admin only)"""
+    if not user_is_admin(interaction.user):
+        await interaction.response.send_message(
+            "This command is restricted to administrators.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    with get_db_session() as session:
+        # Check for any active reservations
+        from repositories import ReservationRepository
+        repo = ReservationRepository(session)
+        active = repo.get_active_reservations()
+        
+        if not active:
+            await interaction.followup.send(
+                "No active reservations to test with.",
+                ephemeral=True
+            )
+            return
+        
+        # Run all notification checks
+        await notification_manager.check_upcoming_reservations(session)
+        await notification_manager.check_expiring_reservations(session)
+        await notification_manager.check_tool_availability(session)
+        session.commit()
+    
+    await interaction.followup.send(
+        f"  Notification checks completed!\n"
+        f"• Checked {len(active)} active reservation(s)\n"
+        f"• Reminders sent for reservations starting in 15-20 min\n"
+        f"• Warnings sent for reservations ending in 15-20 min\n"
+        f"• Waitlist notifications sent if tools available\n\n"
+        f"Check your DMs if any notifications were triggered.",
+
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="help", description="How to use the signout system")
 async def help_cmd(interaction: discord.Interaction):
     """Display help information about the signout system"""
