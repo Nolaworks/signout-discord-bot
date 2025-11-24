@@ -11,7 +11,8 @@ import logging
 from database import (
     UserModel, ToolModel, ReservationModel, ReservationHistoryModel,
     ToolStatisticsModel, UserStatisticsModel, UserToolStatisticsModel,
-    ReservationStatusEnum
+    ReservationStatusEnum, ToolSignoutLimitModel, ConsecutiveSignoutTracker,
+    ConsecutiveSignoutExemption
 )
 from models import User, Tool, Reservation, ReservationHistory
 from time_utils import calculate_duration_hours
@@ -398,3 +399,261 @@ class StatisticsRepository:
         # Calculate statistics similar to tool stats
         # Implementation similar to above...
         stats.updated_at = datetime.utcnow()
+
+
+class ConsecutiveSignoutRepository:
+    """Repository for managing consecutive signout limits and tracking"""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_or_create_limit(self, tool_id: int, tool_name: str) -> ToolSignoutLimitModel:
+        """Get or create signout limit config for a tool"""
+        limit = self.session.query(ToolSignoutLimitModel).filter_by(tool_id=tool_id).first()
+        
+        if not limit:
+            limit = ToolSignoutLimitModel(
+                tool_id=tool_id,
+                tool_name=tool_name,
+                max_consecutive_signouts=0,  # 0 = no limit by default
+                cooldown_hours=24
+            )
+            self.session.add(limit)
+        
+        return limit
+    
+    def set_limit(self, tool_id: int, tool_name: str, max_consecutive: int, cooldown_hours: int) -> ToolSignoutLimitModel:
+        """Set or update consecutive signout limit for a tool"""
+        limit = self.get_or_create_limit(tool_id, tool_name)
+        limit.max_consecutive_signouts = max_consecutive
+        limit.cooldown_hours = cooldown_hours
+        limit.updated_at = datetime.utcnow()
+        return limit
+    
+    def get_limit(self, tool_id: int) -> Optional[ToolSignoutLimitModel]:
+        """Get signout limit config for a tool"""
+        return self.session.query(ToolSignoutLimitModel).filter_by(tool_id=tool_id).first()
+    
+    def get_all_limits(self) -> List[ToolSignoutLimitModel]:
+        """Get all configured limits"""
+        return self.session.query(ToolSignoutLimitModel).filter(
+            ToolSignoutLimitModel.max_consecutive_signouts > 0
+        ).all()
+    
+    def get_tracker(self, user_id: str, tool_id: int) -> Optional[ConsecutiveSignoutTracker]:
+        """Get consecutive signout tracker for user-tool pair"""
+        return self.session.query(ConsecutiveSignoutTracker).filter_by(
+            user_id=user_id,
+            tool_id=tool_id
+        ).first()
+    
+    def increment_consecutive(self, user_id: str, username: str, tool_id: int, tool_name: str, 
+                             reservation_end_time: datetime) -> ConsecutiveSignoutTracker:
+        """Increment consecutive signout count"""
+        tracker = self.get_tracker(user_id, tool_id)
+        
+        if not tracker:
+            tracker = ConsecutiveSignoutTracker(
+                user_id=user_id,
+                username=username,
+                tool_id=tool_id,
+                tool_name=tool_name,
+                consecutive_count=1,
+                last_signout_ended_at=reservation_end_time
+            )
+            self.session.add(tracker)
+        else:
+            tracker.consecutive_count += 1
+            tracker.last_signout_ended_at=reservation_end_time
+            tracker.updated_at = datetime.utcnow()
+        
+        return tracker
+    
+    def reset_consecutive(self, user_id: str, tool_id: int):
+        """Reset consecutive count (someone else signed out the tool)"""
+        tracker = self.get_tracker(user_id, tool_id)
+        if tracker:
+            tracker.consecutive_count = 0
+            tracker.cooldown_expires_at = None
+            tracker.updated_at = datetime.utcnow()
+    
+    def set_cooldown(self, user_id: str, tool_id: int, cooldown_hours: int) -> datetime:
+        """Set cooldown period for a user"""
+        from datetime import timedelta
+        tracker = self.get_tracker(user_id, tool_id)
+        
+        if tracker:
+            cooldown_expires = datetime.utcnow() + timedelta(hours=cooldown_hours)
+            tracker.cooldown_expires_at = cooldown_expires
+            tracker.updated_at = datetime.utcnow()
+            return cooldown_expires
+        
+        return None
+    
+    def is_in_cooldown(self, user_id: str, tool_id: int) -> tuple[bool, Optional[datetime]]:
+        """Check if user is in cooldown period. Returns (is_in_cooldown, expires_at)"""
+        tracker = self.get_tracker(user_id, tool_id)
+        
+        if not tracker or not tracker.cooldown_expires_at:
+            return False, None
+        
+        now = datetime.utcnow()
+        if tracker.cooldown_expires_at > now:
+            return True, tracker.cooldown_expires_at
+        else:
+            # Cooldown expired, clear it
+            tracker.cooldown_expires_at = None
+            tracker.updated_at = datetime.utcnow()
+            return False, None
+    
+    def is_exempt(self, user_id: str, tool_id: int) -> bool:
+        """Check if user has an exemption for this tool"""
+        exemption = self.session.query(ConsecutiveSignoutExemption).filter_by(
+            user_id=user_id,
+            tool_id=tool_id
+        ).first()
+        
+        if not exemption:
+            return False
+        
+        # Check if exemption has expired
+        if exemption.expires_at and exemption.expires_at <= datetime.utcnow():
+            # Expired, remove it
+            self.session.delete(exemption)
+            return False
+        
+        return True
+    
+    def add_exemption(self, user_id: str, username: str, tool_id: int, tool_name: str,
+                     granted_by_user_id: str, granted_by_username: str, 
+                     reason: Optional[str] = None, expires_hours: Optional[int] = None) -> ConsecutiveSignoutExemption:
+        """Grant an exemption to a user for a specific tool"""
+        from datetime import timedelta
+        
+        # Check if exemption already exists
+        existing = self.session.query(ConsecutiveSignoutExemption).filter_by(
+            user_id=user_id,
+            tool_id=tool_id
+        ).first()
+        
+        if existing:
+            # Update existing
+            existing.granted_by_user_id = granted_by_user_id
+            existing.granted_by_username = granted_by_username
+            existing.reason = reason
+            existing.expires_at = datetime.utcnow() + timedelta(hours=expires_hours) if expires_hours else None
+            return existing
+        else:
+            # Create new
+            exemption = ConsecutiveSignoutExemption(
+                user_id=user_id,
+                username=username,
+                tool_id=tool_id,
+                tool_name=tool_name,
+                granted_by_user_id=granted_by_user_id,
+                granted_by_username=granted_by_username,
+                reason=reason,
+                expires_at=datetime.utcnow() + timedelta(hours=expires_hours) if expires_hours else None
+            )
+            self.session.add(exemption)
+            return exemption
+    
+    def remove_exemption(self, user_id: str, tool_id: int) -> bool:
+        """Remove an exemption"""
+        exemption = self.session.query(ConsecutiveSignoutExemption).filter_by(
+            user_id=user_id,
+            tool_id=tool_id
+        ).first()
+        
+        if exemption:
+            self.session.delete(exemption)
+            return True
+        return False
+    
+    def get_all_exemptions(self, tool_id: Optional[int] = None) -> List[ConsecutiveSignoutExemption]:
+        """Get all active exemptions, optionally filtered by tool"""
+        query = self.session.query(ConsecutiveSignoutExemption)
+        
+        if tool_id:
+            query = query.filter_by(tool_id=tool_id)
+        
+        # Filter out expired ones
+        now = datetime.utcnow()
+        exemptions = query.all()
+        
+        # Clean up expired
+        active = []
+        for ex in exemptions:
+            if ex.expires_at and ex.expires_at <= now:
+                self.session.delete(ex)
+            else:
+                active.append(ex)
+        
+        return active
+    
+    def check_signout_allowed(self, user_id: str, username: str, tool_id: int, tool_name: str) -> tuple[bool, Optional[str]]:
+        """
+        Check if user is allowed to sign out a tool.
+        Returns (allowed, error_message)
+        """
+        # Check if user has an exemption
+        if self.is_exempt(user_id, tool_id):
+            return True, None
+        
+        # Get limit config
+        limit = self.get_limit(tool_id)
+        
+        # If no limit configured or limit is 0, allow
+        if not limit or limit.max_consecutive_signouts == 0:
+            return True, None
+        
+        # Check cooldown first
+        in_cooldown, expires_at = self.is_in_cooldown(user_id, tool_id)
+        if in_cooldown:
+            from time_utils import CENTRAL_TZ
+            import pytz
+            expires_ct = expires_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ)
+            hours_left = (expires_at - datetime.utcnow()).total_seconds() / 3600
+            
+            return False, (
+                f"⏳ **Cooldown Active**\n\n"
+                f"You've reached the maximum of **{limit.max_consecutive_signouts}** consecutive signouts for **{tool_name}**.\n\n"
+                f"You can sign it out again after the cooldown period expires:\n"
+                f"**{expires_ct.strftime('%m/%d/%Y at %I:%M %p CT')}** ({hours_left:.1f} hours from now)"
+            )
+        
+        # Check consecutive count
+        tracker = self.get_tracker(user_id, tool_id)
+        if tracker and tracker.consecutive_count >= limit.max_consecutive_signouts:
+            # They've hit the limit, apply cooldown
+            expires_at = self.set_cooldown(user_id, tool_id, limit.cooldown_hours)
+            
+            from time_utils import CENTRAL_TZ
+            import pytz
+            expires_ct = expires_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ)
+            
+            return False, (
+                f"🚫 **Maximum Consecutive Signouts Reached**\n\n"
+                f"You've signed out **{tool_name}** **{limit.max_consecutive_signouts}** times in a row.\n\n"
+                f"To give others a chance, you must wait **{limit.cooldown_hours} hours** before signing it out again.\n\n"
+                f"You can sign out after:\n"
+                f"**{expires_ct.strftime('%m/%d/%Y at %I:%M %p CT')}**"
+            )
+        
+        return True, None
+    
+    def handle_signout_ended(self, user_id: str, username: str, tool_id: int, tool_name: str, 
+                            reservation_end_time: datetime):
+        """Called when a reservation ends (returned or expired)"""
+        # Check if someone else has signed out this tool since their reservation
+        # If so, reset their consecutive count
+        latest_res = self.session.query(ReservationModel).filter(
+            ReservationModel.tool_id == tool_id,
+            ReservationModel.user_id != user_id,
+            ReservationModel.start_time >= reservation_end_time,
+            ReservationModel.status == ReservationStatusEnum.ACTIVE
+        ).first()
+        
+        if latest_res:
+            # Someone else signed it out, reset this user's count
+            self.reset_consecutive(user_id, tool_id)

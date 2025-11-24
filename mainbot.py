@@ -666,7 +666,7 @@ async def admin_help_cmd(interaction: discord.Interaction):
     
     # Admin Blocks
     embed.add_field(
-        name="Admin Blocks",
+        name="🚫 Admin Blocks",
         value=(
             "`/adblock tool:<name> time:<range> [force]` - Block tool(s)\n"
             "  └ Use `[All Tools]` to block everything\n"
@@ -676,9 +676,24 @@ async def admin_help_cmd(interaction: discord.Interaction):
         inline=False
     )
     
+    # Consecutive Signout Limits
+    embed.add_field(
+        name="🔄 Re-Signout Limits",
+        value=(
+            "`/setresignoutlimit max:<int> cooldown:<hours>` - Set max consecutive signouts\n"
+            "`/viewresignoutlimits` - View all configured limits\n"
+            "`/checkcooldowns` - See who's in cooldown for current tool\n"
+            "`/clearcooldown user:<name>` - Reset a user's cooldown\n"
+            "`/exemptuser user:<name> [duration] [reason]` - Exempt user from limits\n"
+            "`/removeexemption user:<name>` - Remove user's exemption\n"
+            "`/listexemptions` - View all exempted users for current tool"
+        ),
+        inline=False
+    )
+    
     # Notifications
     embed.add_field(
-        name=" Notifications",
+        name="🔔 Notifications",
         value=(
             "`/testnotify` - Test notification system\n"
             "`/adminsummary` - Send daily summary to all admins"
@@ -707,6 +722,9 @@ async def admin_help_cmd(interaction: discord.Interaction):
             "• **Tool Room channels** enforce photo requirements automatically\n"
             "  - Bot rejects signout/return commands without photos\n"
             "  - Regular channels make photos optional\n"
+            "• **Re-signout limits** prevent users from monopolizing tools\n"
+            "  - Set per-tool limits to give everyone a fair chance\n"
+            "  - Admins are exempt from these limits\n"
             "• All admin actions are logged for auditing"
         ),
         inline=False
@@ -811,6 +829,17 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             is_tool_room=is_tool_room_channel(interaction.channel)
         )
         
+        # Check consecutive signout limit (unless admin)
+        if not is_admin:
+            from repositories import ConsecutiveSignoutRepository
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            allowed, error_msg = consecutive_repo.check_signout_allowed(user_id, username, tool.id, tool_name)
+            
+            if not allowed:
+                await interaction.followup.send(error_msg, ephemeral=True)
+                logger.info(f"Consecutive signout limit blocked {username} from signing out {tool_name}")
+                return
+        
         # Parse time with GPT
         formatted_time = await parse_time_with_gpt(time)
         
@@ -869,6 +898,12 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             status=ReservationStatusEnum.ACTIVE
         )
         
+        # Increment consecutive signout counter (unless admin)
+        if not is_admin:
+            from repositories import ConsecutiveSignoutRepository
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            consecutive_repo.increment_consecutive(user_id, username, tool.id, tool_name, end_time)
+        
         session.commit()
         
         # Prepare response
@@ -926,6 +961,15 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
         # Mark as cancelled
         res.status = ReservationStatusEnum.CANCELLED
         res.updated_at = datetime.now(timezone.utc)
+        
+        # Decrement consecutive count since they cancelled (shouldn't count against them)
+        from repositories import ConsecutiveSignoutRepository
+        consecutive_repo = ConsecutiveSignoutRepository(session)
+        tracker = consecutive_repo.get_tracker(user_id, res.tool_id)
+        if tracker and tracker.consecutive_count > 0:
+            tracker.consecutive_count -= 1
+            tracker.updated_at = datetime.now(timezone.utc)
+            logger.info(f"Decremented consecutive count for {res.username} on {tool_name} due to cancellation")
         
         session.commit()
         

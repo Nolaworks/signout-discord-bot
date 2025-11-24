@@ -1,6 +1,8 @@
 """
 Migration script to transfer data from JSON/CSV files to PostgreSQL database.
 Run this once to migrate existing data.
+
+Updated to include consecutive signout tracking tables.
 """
 import csv
 import logging
@@ -212,8 +214,25 @@ def main():
     logger.info("=" * 60)
     
     try:
-        # Initialize database
+        # Initialize database (creates all tables including new ones)
+        logger.info("Initializing database schema...")
         init_database()
+        logger.info("✓ Database schema initialized")
+        
+        # Verify new tables were created
+        from sqlalchemy import create_engine, inspect
+        config = get_config()
+        engine = create_engine(config.database_url, echo=False)
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        # Check for new consecutive signout tables
+        new_tables = ['tool_signout_limits', 'consecutive_signout_tracker', 'consecutive_signout_exemptions']
+        for table in new_tables:
+            if table in tables:
+                logger.info(f"✓ New table created: {table}")
+            else:
+                logger.warning(f"⚠ Table not found: {table}")
         
         # Migrate tools and active reservations
         migrate_tools_and_reservations()
@@ -225,6 +244,13 @@ def main():
         logger.info("Migration completed successfully!")
         logger.info("=" * 60)
         logger.info("IMPORTANT: Verify the migration before deleting JSON/CSV files")
+        logger.info("")
+        logger.info("New features available:")
+        logger.info("  • Consecutive signout limits per tool")
+        logger.info("  • User exemptions from limits")
+        logger.info("  • Cooldown tracking")
+        logger.info("")
+        logger.info("Use /setresignoutlimit in tool channels to configure limits")
         
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)

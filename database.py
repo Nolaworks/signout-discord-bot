@@ -332,3 +332,99 @@ class NotificationLogModel(Base):
     
     def __repr__(self):
         return f"<NotificationLog(type={self.notification_type}, user={self.user_id})>"
+
+
+class ToolSignoutLimitModel(Base):
+    """Configuration for consecutive signout limits per tool"""
+    __tablename__ = "tool_signout_limits"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tool_id = Column(Integer, ForeignKey("tools.id"), nullable=False, unique=True, index=True)
+    tool_name = Column(String(100), nullable=False)
+    
+    # Limit settings
+    max_consecutive_signouts = Column(Integer, default=0, nullable=False)  # 0 = no limit
+    cooldown_hours = Column(Integer, default=24, nullable=False)  # Hours before user can sign out again
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    tool = relationship("ToolModel", foreign_keys=[tool_id])
+    
+    __table_args__ = (
+        CheckConstraint('max_consecutive_signouts >= 0', name='check_max_consecutive_positive'),
+        CheckConstraint('cooldown_hours > 0', name='check_cooldown_positive'),
+    )
+    
+    def __repr__(self):
+        return f"<ToolSignoutLimit(tool={self.tool_name}, max={self.max_consecutive_signouts}, cooldown={self.cooldown_hours}h)>"
+
+
+class ConsecutiveSignoutTracker(Base):
+    """Tracks consecutive signouts for each user per tool"""
+    __tablename__ = "consecutive_signout_tracker"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), ForeignKey("users.user_id"), nullable=False, index=True)
+    tool_id = Column(Integer, ForeignKey("tools.id"), nullable=False, index=True)
+    
+    # Metadata
+    username = Column(String(100), nullable=False)
+    tool_name = Column(String(100), nullable=False)
+    
+    # Tracking data
+    consecutive_count = Column(Integer, default=0, nullable=False)
+    last_signout_ended_at = Column(DateTime, nullable=False)  # When their last reservation ended
+    cooldown_expires_at = Column(DateTime)  # When cooldown period ends (null if not in cooldown)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("UserModel", foreign_keys=[user_id])
+    tool = relationship("ToolModel", foreign_keys=[tool_id])
+    
+    __table_args__ = (
+        Index('idx_consecutive_signouts', 'user_id', 'tool_id', unique=True),
+        Index('idx_cooldown_expiry', 'cooldown_expires_at'),
+    )
+    
+    def __repr__(self):
+        return f"<ConsecutiveSignoutTracker(user={self.username}, tool={self.tool_name}, count={self.consecutive_count})>"
+
+
+class ConsecutiveSignoutExemption(Base):
+    """Tracks users who are exempt from consecutive signout limits"""
+    __tablename__ = "consecutive_signout_exemptions"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), ForeignKey("users.user_id"), nullable=False, index=True)
+    tool_id = Column(Integer, ForeignKey("tools.id"), nullable=False, index=True)
+    
+    # Metadata
+    username = Column(String(100), nullable=False)
+    tool_name = Column(String(100), nullable=False)
+    
+    # Exemption details
+    granted_by_user_id = Column(String(50), nullable=False)  # Admin who granted it
+    granted_by_username = Column(String(100), nullable=False)
+    reason = Column(Text)  # Optional reason for exemption
+    expires_at = Column(DateTime)  # Optional expiration (null = permanent)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("UserModel", foreign_keys=[user_id])
+    tool = relationship("ToolModel", foreign_keys=[tool_id])
+    
+    __table_args__ = (
+        Index('idx_exemption_user_tool', 'user_id', 'tool_id'),
+        Index('idx_exemption_expiry', 'expires_at'),
+    )
+    
+    def __repr__(self):
+        return f"<ConsecutiveSignoutExemption(user={self.username}, tool={self.tool_name})>"

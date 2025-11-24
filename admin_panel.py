@@ -20,7 +20,7 @@ from config import get_config
 from db_session import get_db_session
 from repositories import (
     UserRepository, ToolRepository, ReservationRepository,
-    ReservationHistoryRepository, StatisticsRepository
+    ReservationHistoryRepository, StatisticsRepository, ConsecutiveSignoutRepository
 )
 from database import ReservationStatusEnum
 from gptparse import rewrite_reservation_with_gpt, parse_time_with_gpt
@@ -883,6 +883,429 @@ class AdminPanel(commands.Cog):
                 await interaction.followup.send("No active or upcoming admin blocks.", ephemeral=True)
             else:
                 await interaction.followup.send("**Admin blocks:**\n" + "\n".join(lines), ephemeral=True)
+
+    # ========== Consecutive Signout Limits ==========
+
+    @app_commands.command(name="setresignoutlimit", description="[ADMIN] Set max consecutive re-signouts for current tool")
+    @app_commands.describe(
+        max_consecutive="Maximum times a user can sign out this tool in a row (0 = no limit)",
+        cooldown_hours="Hours user must wait after reaching limit before they can sign out again"
+    )
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def set_resignout_limit(self, interaction: discord.Interaction, max_consecutive: int, cooldown_hours: int):
+        """Set consecutive signout limit for a tool"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        # Validate inputs
+        if max_consecutive < 0:
+            await interaction.response.send_message(
+                "❌ Maximum consecutive signouts must be 0 or greater (0 = no limit).",
+                ephemeral=True
+            )
+            return
+        
+        if cooldown_hours < 1:
+            await interaction.response.send_message(
+                "❌ Cooldown must be at least 1 hour.",
+                ephemeral=True
+            )
+            return
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.response.send_message(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Set the limit
+            limit = consecutive_repo.set_limit(tool.id, tool_name, max_consecutive, cooldown_hours)
+            session.commit()
+            
+            if max_consecutive == 0:
+                await interaction.response.send_message(
+                    f"✅ Removed consecutive signout limit for **{tool_name}**.\n"
+                    f"Users can now sign it out unlimited times in a row.",
+                    ephemeral=False
+                )
+            else:
+                await interaction.response.send_message(
+                    f"✅ Set consecutive signout limit for **{tool_name}**:\n\n"
+                    f"• **Maximum consecutive signouts:** {max_consecutive}\n"
+                    f"• **Cooldown period:** {cooldown_hours} hours\n\n"
+                    f"Users who sign out this tool {max_consecutive} times in a row will need to wait "
+                    f"{cooldown_hours} hours before they can sign it out again.",
+                    ephemeral=False
+                )
+            
+            logger.info(f"Admin {interaction.user.name} set resignout limit for {tool_name}: max={max_consecutive}, cooldown={cooldown_hours}h")
+
+    @app_commands.command(name="viewresignoutlimits", description="[ADMIN] View all configured re-signout limits")
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def view_resignout_limits(self, interaction: discord.Interaction):
+        """View all configured consecutive signout limits"""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        
+        with get_db_session() as session:
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            limits = consecutive_repo.get_all_limits()
+            
+            if not limits:
+                await interaction.followup.send(
+                    "No consecutive signout limits are currently configured.\n\n"
+                    "Use `/setresignoutlimit` in a tool channel to set one.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title="🔄 Consecutive Re-Signout Limits",
+                description="Tools with consecutive signout restrictions:",
+                color=discord.Color.orange()
+            )
+            
+            for limit in limits:
+                embed.add_field(
+                    name=f"🛠️ {limit.tool_name}",
+                    value=(
+                        f"**Max consecutive:** {limit.max_consecutive_signouts}\n"
+                        f"**Cooldown:** {limit.cooldown_hours} hours\n"
+                        f"_Updated: {limit.updated_at.strftime('%m/%d/%Y')}_"
+                    ),
+                    inline=True
+                )
+            
+            embed.set_footer(text="Use /setresignoutlimit to modify limits")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="checkcooldowns", description="[ADMIN] View users currently in cooldown for current tool")
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def check_cooldowns(self, interaction: discord.Interaction):
+        """Check which users are in cooldown for the current tool"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.followup.send(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get limit config
+            limit = consecutive_repo.get_limit(tool.id)
+            if not limit or limit.max_consecutive_signouts == 0:
+                await interaction.followup.send(
+                    f"**{tool_name}** has no consecutive signout limit configured.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get all trackers for this tool
+            from database import ConsecutiveSignoutTracker
+            trackers = session.query(ConsecutiveSignoutTracker).filter_by(tool_id=tool.id).all()
+            
+            if not trackers:
+                await interaction.followup.send(
+                    f"No signout tracking data for **{tool_name}** yet.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title=f"🔄 Re-Signout Status: {tool_name}",
+                description=f"Limit: {limit.max_consecutive_signouts} consecutive | Cooldown: {limit.cooldown_hours}h",
+                color=discord.Color.blue()
+            )
+            
+            now = datetime.utcnow()
+            active_cooldowns = []
+            approaching_limit = []
+            
+            for tracker in trackers:
+                # Check cooldown
+                if tracker.cooldown_expires_at and tracker.cooldown_expires_at > now:
+                    hours_left = (tracker.cooldown_expires_at - now).total_seconds() / 3600
+                    active_cooldowns.append(
+                        f"• **{tracker.username}**: {hours_left:.1f}h remaining"
+                    )
+                # Check if approaching limit
+                elif tracker.consecutive_count > 0:
+                    approaching_limit.append(
+                        f"• **{tracker.username}**: {tracker.consecutive_count}/{limit.max_consecutive_signouts} consecutive"
+                    )
+            
+            if active_cooldowns:
+                embed.add_field(
+                    name="⏳ In Cooldown",
+                    value="\n".join(active_cooldowns[:10]),
+                    inline=False
+                )
+            
+            if approaching_limit:
+                embed.add_field(
+                    name="📊 Consecutive Signouts",
+                    value="\n".join(approaching_limit[:10]),
+                    inline=False
+                )
+            
+            if not active_cooldowns and not approaching_limit:
+                embed.description += "\n\nNo users currently tracked or in cooldown."
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="clearcooldown", description="[ADMIN] Clear cooldown for a specific user on current tool")
+    @app_commands.describe(username="Username to clear cooldown for")
+    @app_commands.autocomplete(username=user_autocomplete)
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def clear_cooldown(self, interaction: discord.Interaction, username: str):
+        """Clear a user's cooldown and consecutive count"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            user_repo = UserRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.response.send_message(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            user = user_repo.get_by_username(username)
+            if not user:
+                await interaction.response.send_message(
+                    f"User `{username}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Reset their consecutive count and cooldown
+            consecutive_repo.reset_consecutive(user.user_id, tool.id)
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"✅ Cleared cooldown and reset consecutive count for **{username}** on **{tool_name}**.\n"
+                f"They can now sign it out again.",
+                ephemeral=False
+            )
+            
+            logger.info(f"Admin {interaction.user.name} cleared cooldown for {username} on {tool_name}")
+
+    @app_commands.command(name="exemptuser", description="[ADMIN] Exempt a user from re-signout limits for current tool")
+    @app_commands.describe(
+        username="Username to exempt",
+        duration_hours="Hours exemption lasts (leave empty for permanent)",
+        reason="Reason for exemption (optional)"
+    )
+    @app_commands.autocomplete(username=user_autocomplete)
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def exempt_user(self, interaction: discord.Interaction, username: str, 
+                         duration_hours: int = None, reason: str = None):
+        """Grant a user exemption from consecutive signout limits"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            user_repo = UserRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.response.send_message(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            user = user_repo.get_by_username(username)
+            if not user:
+                await interaction.response.send_message(
+                    f"User `{username}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Grant exemption
+            admin_id = get_user_id(interaction.user)
+            exemption = consecutive_repo.add_exemption(
+                user_id=user.user_id,
+                username=username,
+                tool_id=tool.id,
+                tool_name=tool_name,
+                granted_by_user_id=admin_id,
+                granted_by_username=interaction.user.name,
+                reason=reason,
+                expires_hours=duration_hours
+            )
+            
+            # Also clear any existing cooldown
+            consecutive_repo.reset_consecutive(user.user_id, tool.id)
+            
+            session.commit()
+            
+            duration_text = f"for {duration_hours} hours" if duration_hours else "permanently"
+            reason_text = f"\n**Reason:** {reason}" if reason else ""
+            
+            await interaction.response.send_message(
+                f"✅ Granted exemption to **{username}** for **{tool_name}** {duration_text}.{reason_text}\n\n"
+                f"They can now sign out this tool unlimited times without cooldown restrictions.",
+                ephemeral=False
+            )
+            
+            logger.info(f"Admin {interaction.user.name} exempted {username} from limits on {tool_name} ({duration_text})")
+
+    @app_commands.command(name="removeexemption", description="[ADMIN] Remove user exemption from re-signout limits")
+    @app_commands.describe(username="Username to remove exemption from")
+    @app_commands.autocomplete(username=user_autocomplete)
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def remove_exemption(self, interaction: discord.Interaction, username: str):
+        """Remove a user's exemption from consecutive signout limits"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            user_repo = UserRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.response.send_message(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            user = user_repo.get_by_username(username)
+            if not user:
+                await interaction.response.send_message(
+                    f"User `{username}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Remove exemption
+            removed = consecutive_repo.remove_exemption(user.user_id, tool.id)
+            session.commit()
+            
+            if removed:
+                await interaction.response.send_message(
+                    f"✅ Removed exemption for **{username}** on **{tool_name}**.\n"
+                    f"They are now subject to normal consecutive signout limits.",
+                    ephemeral=False
+                )
+                logger.info(f"Admin {interaction.user.name} removed exemption for {username} on {tool_name}")
+            else:
+                await interaction.response.send_message(
+                    f"No exemption found for **{username}** on **{tool_name}**.",
+                    ephemeral=True
+                )
+
+    @app_commands.command(name="listexemptions", description="[ADMIN] View all users with exemptions for current tool")
+    @app_commands.default_permissions(administrator=True)
+    @is_admin_check()
+    async def list_exemptions(self, interaction: discord.Interaction):
+        """List all users with exemptions for the current tool"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.followup.send(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            exemptions = consecutive_repo.get_all_exemptions(tool_id=tool.id)
+            
+            if not exemptions:
+                await interaction.followup.send(
+                    f"No exemptions for **{tool_name}**.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title=f"🔓 Exemptions: {tool_name}",
+                description=f"Users exempt from consecutive signout limits:",
+                color=discord.Color.green()
+            )
+            
+            for ex in exemptions:
+                expiry_text = "Permanent" if not ex.expires_at else f"Expires {ex.expires_at.strftime('%m/%d/%Y %I:%M %p')}"
+                reason_text = f"\n*{ex.reason}*" if ex.reason else ""
+                
+                embed.add_field(
+                    name=f"👤 {ex.username}",
+                    value=(
+                        f"**Duration:** {expiry_text}\n"
+                        f"**Granted by:** {ex.granted_by_username}\n"
+                        f"**Date:** {ex.created_at.strftime('%m/%d/%Y')}"
+                        f"{reason_text}"
+                    ),
+                    inline=False
+                )
+            
+            embed.set_footer(text="Use /removeexemption to revoke access")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ========== Error Handling ==========
 
