@@ -1,0 +1,23 @@
+[Unit]
+Description=Test Signout Discord Bot (main service)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=signout
+EnvironmentFile=/opt/signout/signout-discord-bot/.env
+WorkingDirectory=/opt/signout/signout-discord-bot
+Environment=PYTHONPATH=/opt/signout/signout-discord-bot
+# Wait for remote Postgres (container) to become reachable before starting.
+# Adjust host/port as needed for your environment.
+ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5; do /usr/bin/pg_isready -h ${DB_HOST} -p ${DB_PORT} && exit 0 || sleep 5; done; exit 1'
+ExecStart=/opt/signout/signout-discord-bot/.bot-venv/bin/python3 /opt/signout/signout-discord-bot/mainbot.py
+Restart=always
+RestartSec=5
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

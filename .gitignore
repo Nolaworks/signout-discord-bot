@@ -14,3 +14,7 @@ history.*
 .bot-*
 history.csv.*
 
+
+# Environment file with secrets
+.env
+

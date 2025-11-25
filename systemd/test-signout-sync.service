@@ -1,0 +1,19 @@
+[Unit]
+Description=Test Signout User Statistics Sync (oneshot)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=signout
+WorkingDirectory=/opt/signout/signout-discord-bot
+Environment=PYTHONPATH=/opt/signout/signout-discord-bot
+EnvironmentFile=/opt/signout/signout-discord-bot/.env
+ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5; do /usr/bin/pg_isready -h ${DB_HOST} -p ${DB_PORT} && exit 0 || sleep 5; done; exit 1'
+ExecStart=/opt/signout/signout-discord-bot/.bot-venv/bin/python3 /opt/signout/signout-discord-bot/scripts/sync_user_statistics.py --apply
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
