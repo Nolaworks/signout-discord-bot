@@ -236,12 +236,8 @@ def user_has_tool_role(user: discord.Member, role_id: str) -> bool:
         role_id: Role ID to check
     
     Returns:
-        True if user has the role or is admin
+        True if user has the role
     """
-    # Admins bypass role requirements
-    if user_is_admin(user):
-        return True
-    
     # Check if user has the specific role
     if role_id:
         return any(str(role.id) == role_id for role in user.roles)

@@ -2,7 +2,9 @@
 Migration script to transfer data from JSON/CSV files to PostgreSQL database.
 Run this once to migrate existing data.
 
-Updated to include consecutive signout tracking tables.
+Updated to include:
+- Consecutive signout tracking tables
+- Role-based permission columns in tools table
 """
 import csv
 import logging
@@ -234,6 +236,18 @@ def main():
             else:
                 logger.warning(f"⚠ Table not found: {table}")
         
+        # Verify role-based permission columns exist in tools table
+        tools_columns = [col['name'] for col in inspector.get_columns('tools')]
+        if 'role_id' in tools_columns:
+            logger.info("✓ Column 'role_id' exists in tools table")
+        else:
+            logger.warning("⚠ Column 'role_id' not found in tools table")
+        
+        if 'role_required' in tools_columns:
+            logger.info("✓ Column 'role_required' exists in tools table")
+        else:
+            logger.warning("⚠ Column 'role_required' not found in tools table")
+        
         # Migrate tools and active reservations
         migrate_tools_and_reservations()
         
@@ -249,8 +263,13 @@ def main():
         logger.info("  • Consecutive signout limits per tool")
         logger.info("  • User exemptions from limits")
         logger.info("  • Cooldown tracking")
+        logger.info("  • Role-based permissions for tools")
         logger.info("")
-        logger.info("Use /setresignoutlimit in tool channels to configure limits")
+        logger.info("Next steps:")
+        logger.info("  1. Use /setresignoutlimit in tool channels to configure limits")
+        logger.info("  2. Run /syncroles to create Discord roles for all tools")
+        logger.info("  3. Use /togglerole to enable role requirements per tool")
+        logger.info("  4. See ROLE_BASED_PERMISSIONS.md for complete documentation")
         
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)

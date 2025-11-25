@@ -829,13 +829,14 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             is_tool_room=is_tool_room_channel(interaction.channel)
         )
         
-        # Check role requirement (unless admin)
-        if not is_admin and tool.role_required and tool.role_id:
-            from discord_utils import user_has_tool_role
+        # Check role requirement (including admins)
+        if tool.role_required and tool.role_id:
+            # Check if user has the required role
+            user_has_role = any(str(role.id) == tool.role_id for role in interaction.user.roles)
             
-            if not user_has_tool_role(interaction.user, tool.role_id):
+            if not user_has_role:
                 await interaction.followup.send(
-                    f"❌ You need the <@&{tool.role_id}> role to sign out **{tool_name}**.\n\n"
+                    f"You need the <@&{tool.role_id}> role to sign out **{tool_name}**.\n\n"
                     f"Please contact an admin to get access to this tool.",
                     ephemeral=True
                 )
@@ -1142,7 +1143,7 @@ async def on_guild_channel_create(channel):
         session.commit()
         
         # Send welcome message
-        role_msg = f"\n🎭 Role created: {role.mention} (use `/togglerole` to enable requirement)" if role else ""
+        role_msg = f"\nRole created: {role.mention} (use `/togglerole` to enable requirement)" if role else ""
         await channel.send(f"Tool '{tool_name}' has been added for reservations.{role_msg}")
 
 
