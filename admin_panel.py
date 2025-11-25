@@ -1333,7 +1333,7 @@ class AdminPanel(commands.Cog):
     # ========== Role Management Commands ==========
 
     @app_commands.command(name="togglerole", description="Toggle role requirement for current tool")
-    @app_commands.check(is_admin_check)
+    @is_admin_check()
     async def togglerole(self, interaction: discord.Interaction):
         """Toggle whether a role is required to sign out the current tool"""
         # Validate channel
@@ -1396,7 +1396,7 @@ class AdminPanel(commands.Cog):
 
     @app_commands.command(name="assignrole", description="Give a user access to the current tool")
     @app_commands.describe(user="User to give tool access")
-    @app_commands.check(is_admin_check)
+    @is_admin_check()
     async def assignrole(self, interaction: discord.Interaction, user: discord.Member):
         """Assign the current tool's role to a user"""
         # Validate channel
@@ -1464,7 +1464,7 @@ class AdminPanel(commands.Cog):
 
     @app_commands.command(name="revokerole", description="Remove a user's access to the current tool")
     @app_commands.describe(user="User to revoke tool access from")
-    @app_commands.check(is_admin_check)
+    @is_admin_check()
     async def revokerole(self, interaction: discord.Interaction, user: discord.Member):
         """Remove the current tool's role from a user"""
         # Validate channel
@@ -1529,7 +1529,7 @@ class AdminPanel(commands.Cog):
                 )
 
     @app_commands.command(name="syncroles", description="Sync all tool roles with the database")
-    @app_commands.check(is_admin_check)
+    @is_admin_check()
     async def syncroles(self, interaction: discord.Interaction):
         """Create Discord roles for all tools that don't have them"""
         await interaction.response.defer(ephemeral=True, thinking=True)

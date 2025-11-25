@@ -353,14 +353,100 @@ async def admin_summary(interaction: discord.Interaction):
             )
             return
         
+        # Get tool role information
+        tool_repo = ToolRepository(session)
+        tools = tool_repo.get_all()
+        
+        # Build role summary
+        role_summary = []
+        tools_with_roles = []
+        
+        for tool in tools:
+            if tool.role_id and tool.role_required:
+                role = interaction.guild.get_role(int(tool.role_id))
+                if role:
+                    # Get members with this role
+                    members_with_role = [m.name for m in role.members]
+                    
+                    # Get all guild members (excluding bots)
+                    all_members = [m.name for m in interaction.guild.members if not m.bot]
+                    
+                    # Find members without the role
+                    members_without_role = [m for m in all_members if m not in members_with_role]
+                    
+                    tools_with_roles.append({
+                        'tool': tool.name,
+                        'role': role.name,
+                        'with_role': members_with_role,
+                        'without_role': members_without_role
+                    })
+        
         # Send summary to all admins
         await notification_manager.send_daily_summary(session, admin_ids)
+        
+        # Also send role summary
+        for admin_id in admin_ids:
+            try:
+                admin_user = await bot.fetch_user(int(admin_id))
+                
+                if tools_with_roles:
+                    # Create embed for role summary
+                    embed = discord.Embed(
+                        title="Tool Role Access Summary",
+                        description="Overview of restricted tools and user access",
+                        color=discord.Color.blue()
+                    )
+                    
+                    for tool_info in tools_with_roles:
+                        with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
+                        without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
+                        
+                        field_value = (
+                            f"**Has Access ({len(tool_info['with_role'])}):**\n{with_role_text}\n\n"
+                            f"**Needs Access ({len(tool_info['without_role'])}):**\n{without_role_text}"
+                        )
+                        
+                        # Discord field value limit is 1024 characters
+                        if len(field_value) > 1024:
+                            field_value = (
+                                f"**Has Access:** {len(tool_info['with_role'])} users\n"
+                                f"**Needs Access:** {len(tool_info['without_role'])} users\n"
+                                f"(Too many to list - use Discord role view)"
+                            )
+                        
+                        embed.add_field(
+                            name=f"{tool_info['tool']} (Role: {tool_info['role']})",
+                            value=field_value,
+                            inline=False
+                        )
+                    
+                    embed.set_footer(text="Use /assignrole to grant access to users")
+                    
+                    await admin_user.send(embed=embed)
+                    logger.info(f"Sent role summary to admin {admin_user.name}")
+                else:
+                    # No restricted tools
+                    embed = discord.Embed(
+                        title="Tool Role Access Summary",
+                        description="No tools currently have role requirements enabled.",
+                        color=discord.Color.blue()
+                    )
+                    embed.set_footer(text="Use /togglerole to enable role requirements")
+                    await admin_user.send(embed=embed)
+                    logger.info(f"Sent empty role summary to admin {admin_user.name}")
+                    
+            except discord.Forbidden:
+                logger.warning(f"Cannot send role summary to admin {admin_id} - DMs disabled")
+            except Exception as e:
+                logger.error(f"Error sending role summary to admin {admin_id}: {e}")
+        
         session.commit()
     
-    await interaction.followup.send(
-        f"Daily notification summary has been sent to {len(admin_ids)} admin(s)!",
-        ephemeral=True
-    )
+    summary_text = f"Daily notification summary has been sent to {len(admin_ids)} admin(s)!"
+    if tools_with_roles:
+        summary_text += f"\n\nRole access summary included for {len(tools_with_roles)} restricted tool(s)."
+    
+    await interaction.followup.send(summary_text, ephemeral=True)
 
 
 @bot.tree.command(name="testnotify", description="[ADMIN] Test notification system with current reservations")
