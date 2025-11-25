@@ -214,24 +214,47 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(error_msg, ephemeral=True)
             return
         
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
             
             existing = tool_repo.get_by_name(tool)
             if existing:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"Tool `{tool}` already exists with max time {existing.max_time_hours}h.",
                     ephemeral=True
                 )
                 return
             
+            # Create the tool
             tool_obj = tool_repo.get_or_create(name=tool, max_time_hours=max_hours)
-            session.commit()
             
-            await interaction.response.send_message(
-                f"Tool `{tool}` has been added with max time {max_hours}h."
-            )
-            logger.info(f"Admin {interaction.user.name} added tool: {tool}")
+            # Create Discord role for the tool
+            from discord_utils import get_or_create_tool_role
+            role = await get_or_create_tool_role(interaction.guild, tool)
+            
+            if role:
+                # Link role to tool (disabled by default)
+                tool_repo.set_role(tool, str(role.id), False)
+                session.commit()
+                
+                await interaction.followup.send(
+                    f" Tool `{tool}` has been added with max time {max_hours}h.\n\n"
+                    f"🎭 Created role: {role.mention}\n"
+                    f"ℹ️ Role requirement is **disabled** by default. Use `/togglerole` to enable.",
+                    ephemeral=True
+                )
+                logger.info(f"Admin {interaction.user.name} added tool: {tool} with role {role.id}")
+            else:
+                # Tool created but role creation failed
+                session.commit()
+                await interaction.followup.send(
+                    f"⚠️ Tool `{tool}` added with max time {max_hours}h, but role creation failed.\n\n"
+                    f"Use `/syncroles` to create the role later.",
+                    ephemeral=True
+                )
+                logger.warning(f"Admin {interaction.user.name} added tool: {tool}, but role creation failed")
 
     @app_commands.command(name="removetool", description="Admin: Remove a tool")
     @app_commands.default_permissions(administrator=True)
@@ -842,7 +865,7 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             await interaction.followup.send(
-                f"✅ Removed admin block from **{tool_name}** at `{formatted_time}`"
+                f" Removed admin block from **{tool_name}** at `{formatted_time}`"
             )
             logger.info(f"Admin {interaction.user.name} removed admin block: {tool_name} - {formatted_time}")
 
@@ -935,13 +958,13 @@ class AdminPanel(commands.Cog):
             
             if max_consecutive == 0:
                 await interaction.response.send_message(
-                    f"✅ Removed consecutive signout limit for **{tool_name}**.\n"
+                    f" Removed consecutive signout limit for **{tool_name}**.\n"
                     f"Users can now sign it out unlimited times in a row.",
                     ephemeral=False
                 )
             else:
                 await interaction.response.send_message(
-                    f"✅ Set consecutive signout limit for **{tool_name}**:\n\n"
+                    f" Set consecutive signout limit for **{tool_name}**:\n\n"
                     f"• **Maximum consecutive signouts:** {max_consecutive}\n"
                     f"• **Cooldown period:** {cooldown_hours} hours\n\n"
                     f"Users who sign out this tool {max_consecutive} times in a row will need to wait "
@@ -1119,7 +1142,7 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             await interaction.response.send_message(
-                f"✅ Cleared cooldown and reset consecutive count for **{username}** on **{tool_name}**.\n"
+                f" Cleared cooldown and reset consecutive count for **{username}** on **{tool_name}**.\n"
                 f"They can now sign it out again.",
                 ephemeral=False
             )
@@ -1188,7 +1211,7 @@ class AdminPanel(commands.Cog):
             reason_text = f"\n**Reason:** {reason}" if reason else ""
             
             await interaction.response.send_message(
-                f"✅ Granted exemption to **{username}** for **{tool_name}** {duration_text}.{reason_text}\n\n"
+                f" Granted exemption to **{username}** for **{tool_name}** {duration_text}.{reason_text}\n\n"
                 f"They can now sign out this tool unlimited times without cooldown restrictions.",
                 ephemeral=False
             )
@@ -1236,7 +1259,7 @@ class AdminPanel(commands.Cog):
             
             if removed:
                 await interaction.response.send_message(
-                    f"✅ Removed exemption for **{username}** on **{tool_name}**.\n"
+                    f" Removed exemption for **{username}** on **{tool_name}**.\n"
                     f"They are now subject to normal consecutive signout limits.",
                     ephemeral=False
                 )
@@ -1306,6 +1329,282 @@ class AdminPanel(commands.Cog):
             embed.set_footer(text="Use /removeexemption to revoke access")
             
             await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ========== Role Management Commands ==========
+
+    @app_commands.command(name="togglerole", description="Toggle role requirement for current tool")
+    @app_commands.check(is_admin_check)
+    async def togglerole(self, interaction: discord.Interaction):
+        """Toggle whether a role is required to sign out the current tool"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            tool = tool_repo.get_by_name(tool_name)
+            
+            if not tool:
+                await interaction.followup.send(
+                    f"❌ Tool **{tool_name}** not found in database.",
+                    ephemeral=True
+                )
+                return
+            
+            # Create role if it doesn't exist
+            if not tool.role_id:
+                from discord_utils import get_or_create_tool_role
+                role = await get_or_create_tool_role(interaction.guild, tool_name)
+                
+                if not role:
+                    await interaction.followup.send(
+                        f"❌ Failed to create role for **{tool_name}**. Check bot permissions.",
+                        ephemeral=True
+                    )
+                    return
+                
+                tool_repo.set_role(tool_name, str(role.id), True)
+                session.commit()
+                
+                await interaction.followup.send(
+                    f" Created role <@&{role.id}> for **{tool_name}** and **enabled** role requirement.\n\n"
+                    f"Users now need this role to sign out the tool.",
+                    ephemeral=True
+                )
+                logger.info(f"Created and enabled role requirement for {tool_name} (role ID: {role.id})")
+            else:
+                # Toggle the requirement
+                new_state = not tool.role_required
+                tool_repo.set_role(tool_name, tool.role_id, new_state)
+                session.commit()
+                
+                status = "**enabled**" if new_state else "**disabled**"
+                emoji = "" if new_state else "⚠️"
+                
+                await interaction.followup.send(
+                    f"{emoji} Role requirement {status} for **{tool_name}**.\n\n"
+                    f"Role: <@&{tool.role_id}>\n"
+                    f"Status: {'Users need this role to sign out' if new_state else 'Role check disabled'}",
+                    ephemeral=True
+                )
+                logger.info(f"Toggled role requirement for {tool_name}: {new_state}")
+
+    @app_commands.command(name="assignrole", description="Give a user access to the current tool")
+    @app_commands.describe(user="User to give tool access")
+    @app_commands.check(is_admin_check)
+    async def assignrole(self, interaction: discord.Interaction, user: discord.Member):
+        """Assign the current tool's role to a user"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            tool = tool_repo.get_by_name(tool_name)
+            
+            if not tool or not tool.role_id:
+                await interaction.followup.send(
+                    f"❌ **{tool_name}** doesn't have a role configured.\n\n"
+                    f"Use `/togglerole` first to create and enable the role.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get the role object
+            role = interaction.guild.get_role(int(tool.role_id))
+            
+            if not role:
+                await interaction.followup.send(
+                    f"❌ Role not found. It may have been deleted.\n\n"
+                    f"Use `/togglerole` to recreate it.",
+                    ephemeral=True
+                )
+                return
+            
+            # Check if user already has the role
+            if role in user.roles:
+                await interaction.followup.send(
+                    f"ℹ️ {user.mention} already has the {role.mention} role.",
+                    ephemeral=True
+                )
+                return
+            
+            # Assign the role
+            try:
+                await user.add_roles(role, reason=f"Tool access granted by {interaction.user.name}")
+                
+                await interaction.followup.send(
+                    f" Granted {user.mention} access to **{tool_name}**!\n\n"
+                    f"Role assigned: {role.mention}",
+                    ephemeral=True
+                )
+                logger.info(f"{interaction.user.name} assigned {role.name} to {user.name} for {tool_name}")
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    f"❌ I don't have permission to assign roles.\n\n"
+                    f"Check my role hierarchy and permissions.",
+                    ephemeral=True
+                )
+            except Exception as e:
+                logger.error(f"Error assigning role: {e}")
+                await interaction.followup.send(
+                    f"❌ Failed to assign role: {str(e)}",
+                    ephemeral=True
+                )
+
+    @app_commands.command(name="revokerole", description="Remove a user's access to the current tool")
+    @app_commands.describe(user="User to revoke tool access from")
+    @app_commands.check(is_admin_check)
+    async def revokerole(self, interaction: discord.Interaction, user: discord.Member):
+        """Remove the current tool's role from a user"""
+        # Validate channel
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            tool = tool_repo.get_by_name(tool_name)
+            
+            if not tool or not tool.role_id:
+                await interaction.followup.send(
+                    f"❌ **{tool_name}** doesn't have a role configured.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get the role object
+            role = interaction.guild.get_role(int(tool.role_id))
+            
+            if not role:
+                await interaction.followup.send(
+                    f"❌ Role not found. It may have been deleted.",
+                    ephemeral=True
+                )
+                return
+            
+            # Check if user has the role
+            if role not in user.roles:
+                await interaction.followup.send(
+                    f"ℹ️ {user.mention} doesn't have the {role.mention} role.",
+                    ephemeral=True
+                )
+                return
+            
+            # Remove the role
+            try:
+                await user.remove_roles(role, reason=f"Tool access revoked by {interaction.user.name}")
+                
+                await interaction.followup.send(
+                    f" Revoked {user.mention}'s access to **{tool_name}**.\n\n"
+                    f"Role removed: {role.mention}",
+                    ephemeral=True
+                )
+                logger.info(f"{interaction.user.name} revoked {role.name} from {user.name} for {tool_name}")
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    f"❌ I don't have permission to remove roles.\n\n"
+                    f"Check my role hierarchy and permissions.",
+                    ephemeral=True
+                )
+            except Exception as e:
+                logger.error(f"Error removing role: {e}")
+                await interaction.followup.send(
+                    f"❌ Failed to remove role: {str(e)}",
+                    ephemeral=True
+                )
+
+    @app_commands.command(name="syncroles", description="Sync all tool roles with the database")
+    @app_commands.check(is_admin_check)
+    async def syncroles(self, interaction: discord.Interaction):
+        """Create Discord roles for all tools that don't have them"""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            tools = tool_repo.get_all()
+            
+            if not tools:
+                await interaction.followup.send(
+                    "No tools found in database.",
+                    ephemeral=True
+                )
+                return
+            
+            from discord_utils import get_or_create_tool_role
+            
+            created = []
+            updated = []
+            errors = []
+            
+            for tool in tools:
+                role = await get_or_create_tool_role(interaction.guild, tool.name)
+                
+                if role:
+                    if not tool.role_id:
+                        # New role created
+                        tool_repo.set_role(tool.name, str(role.id), False)
+                        created.append(f"<@&{role.id}> → **{tool.name}**")
+                        logger.info(f"Created role for {tool.name} (ID: {role.id})")
+                    elif tool.role_id != str(role.id):
+                        # Role ID updated
+                        tool_repo.set_role(tool.name, str(role.id), tool.role_required)
+                        updated.append(f"<@&{role.id}> → **{tool.name}**")
+                        logger.info(f"Updated role ID for {tool.name} (ID: {role.id})")
+                else:
+                    errors.append(f"❌ **{tool.name}** - Failed to create role")
+                    logger.error(f"Failed to create role for {tool.name}")
+            
+            session.commit()
+            
+            # Build response
+            embed = discord.Embed(
+                title="🔄 Role Sync Complete",
+                color=discord.Color.blue()
+            )
+            
+            if created:
+                embed.add_field(
+                    name=f" Created ({len(created)})",
+                    value="\n".join(created),
+                    inline=False
+                )
+            
+            if updated:
+                embed.add_field(
+                    name=f"🔄 Updated ({len(updated)})",
+                    value="\n".join(updated),
+                    inline=False
+                )
+            
+            if errors:
+                embed.add_field(
+                    name=f"❌ Errors ({len(errors)})",
+                    value="\n".join(errors),
+                    inline=False
+                )
+            
+            if not created and not updated and not errors:
+                embed.description = "All tools already have roles configured."
+            
+            embed.set_footer(text=f"Total tools: {len(tools)}")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            logger.info(f"Role sync completed: {len(created)} created, {len(updated)} updated, {len(errors)} errors")
 
     # ========== Error Handling ==========
 

@@ -1,4 +1,5 @@
 signout-venv
+bot.log
 __pycache__
 .bash_history
 .bash_logout
@@ -11,6 +12,5 @@ __pycache__
 tools.*
 history.*
 .bot-*
-bot.log
 history.csv.*
 

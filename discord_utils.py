@@ -187,3 +187,83 @@ def get_user_id(user) -> str:
         User ID as string
     """
     return str(user.id)
+
+
+async def create_tool_role(guild: discord.Guild, tool_name: str) -> Optional[discord.Role]:
+    """
+    Create a Discord role for a tool.
+    
+    Args:
+        guild: Discord guild object
+        tool_name: Name of the tool
+    
+    Returns:
+        Created role or None if creation fails
+    """
+    role_name = f"Tool: {tool_name}"
+    
+    # Check if role already exists
+    existing_role = discord.utils.get(guild.roles, name=role_name)
+    if existing_role:
+        logger.info(f"Role '{role_name}' already exists")
+        return existing_role
+    
+    try:
+        # Create the role with a distinctive color
+        role = await guild.create_role(
+            name=role_name,
+            mentionable=False,
+            hoist=False,  # Don't display separately in member list
+            color=discord.Color.blue(),
+            reason=f"Auto-created role for tool signout permissions: {tool_name}"
+        )
+        logger.info(f"Created role '{role_name}' (ID: {role.id})")
+        return role
+    except discord.Forbidden:
+        logger.error(f"Bot lacks permissions to create role for {tool_name}")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating role for {tool_name}: {e}")
+        return None
+
+
+def user_has_tool_role(user: discord.Member, role_id: str) -> bool:
+    """
+    Check if a user has a specific tool role.
+    
+    Args:
+        user: Discord member object
+        role_id: Role ID to check
+    
+    Returns:
+        True if user has the role or is admin
+    """
+    # Admins bypass role requirements
+    if user_is_admin(user):
+        return True
+    
+    # Check if user has the specific role
+    if role_id:
+        return any(str(role.id) == role_id for role in user.roles)
+    
+    return True  # If no role_id specified, allow access
+
+
+async def get_or_create_tool_role(guild: discord.Guild, tool_name: str) -> Optional[discord.Role]:
+    """
+    Get existing tool role or create it if it doesn't exist.
+    
+    Args:
+        guild: Discord guild object
+        tool_name: Name of the tool
+    
+    Returns:
+        Role object or None
+    """
+    role_name = f"Tool: {tool_name}"
+    existing_role = discord.utils.get(guild.roles, name=role_name)
+    
+    if existing_role:
+        return existing_role
+    
+    return await create_tool_role(guild, tool_name)

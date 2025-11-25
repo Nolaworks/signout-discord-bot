@@ -63,6 +63,28 @@ python3 helper_scripts/fix_consecutive_tables.py
 
 ---
 
+### `migrate_role_permissions.py`
+**Purpose:** Add role-based permission columns to tools table
+
+**Usage:**
+```bash
+python3 helper_scripts/migrate_role_permissions.py
+```
+
+**When to use:**
+- Adding role-based permissions to existing database
+- Upgrading to version with tool access control
+
+**What it adds:**
+- `role_id` column - Stores Discord role ID for tool
+- `role_required` column - Whether role is needed to sign out
+
+**After migration:**
+- Run `/syncroles` in Discord to create roles for existing tools
+- See `ROLE_BASED_PERMISSIONS.md` for full documentation
+
+---
+
 ## Database Management
 
 ### `reset_db.py`

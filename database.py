@@ -64,6 +64,10 @@ class ToolModel(Base):
     channel_name = Column(String(100))
     is_tool_room = Column(Boolean, default=False)
     
+    # Role information
+    role_id = Column(String(50), index=True)  # Discord role ID for this tool
+    role_required = Column(Boolean, default=False)  # Whether role is required to sign out
+    
     # Statistics
     total_reservations = Column(Integer, default=0)
     total_time_hours = Column(Float, default=0.0)

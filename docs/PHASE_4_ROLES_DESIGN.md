@@ -184,7 +184,7 @@ async def require_role(interaction: discord.Interaction, tool: str, role: discor
     # Set tool.open_access = False
     
     await interaction.response.send_message(
-        f"✅ Tool `{tool}` now requires role @{role.name}",
+        f" Tool `{tool}` now requires role @{role.name}",
         ephemeral=True
     )
 
@@ -200,7 +200,7 @@ async def remove_role(interaction: discord.Interaction, tool: str, role: discord
     # If no roles left, set open_access = True
     
     await interaction.response.send_message(
-        f"✅ Removed role requirement @{role.name} from `{tool}`",
+        f" Removed role requirement @{role.name} from `{tool}`",
         ephemeral=True
     )
 
@@ -247,7 +247,7 @@ async def open_access(interaction: discord.Interaction, tool: str):
     # Set open_access = True, requires_roles = False
     
     await interaction.response.send_message(
-        f"✅ Tool `{tool}` is now open access (no role requirements)",
+        f" Tool `{tool}` is now open access (no role requirements)",
         ephemeral=True
     )
 ```
@@ -267,7 +267,7 @@ async def my_access(interaction: discord.Interaction):
     embed = discord.Embed(title=f"🔑 Tool Access for {interaction.user.name}")
     
     if accessible_tools:
-        accessible_list = "\n".join(f"✅ {tool.name}" for tool in accessible_tools)
+        accessible_list = "\n".join(f" {tool.name}" for tool in accessible_tools)
         embed.add_field(name="Accessible Tools", value=accessible_list, inline=False)
     
     if restricted_tools:
@@ -302,7 +302,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
 ### Success Flow
 ```
 User: /signout time:tomorrow 2pm to 5pm
-Bot: ✅ Reserved CNC Router for tomorrow 2:00 PM - 5:00 PM
+Bot:  Reserved CNC Router for tomorrow 2:00 PM - 5:00 PM
 ```
 
 ### Access Denied Flow
@@ -319,7 +319,7 @@ Bot: 🚫 Access Denied: This tool requires one of the following roles:
 ### Admin Management Flow
 ```
 Admin: /requirerole tool:CNC role:@CNC Operator
-Bot: ✅ Tool `CNC` now requires role @CNC Operator
+Bot:  Tool `CNC` now requires role @CNC Operator
 
 Admin: /listroles tool:CNC
 Bot: **Tool: CNC**
@@ -328,7 +328,7 @@ Bot: **Tool: CNC**
      • @Master Maker
 
 Admin: /openaccess tool:Hand Drill
-Bot: ✅ Tool `Hand Drill` is now open access (no role requirements)
+Bot:  Tool `Hand Drill` is now open access (no role requirements)
 ```
 
 ---
@@ -471,24 +471,24 @@ CREATE TABLE permission_audit_log (
 ## 💰 Benefits
 
 ### Safety
-✅ Prevents untrained users from accessing dangerous equipment  
-✅ Reduces accidents and injuries  
-✅ Legal liability protection
+ Prevents untrained users from accessing dangerous equipment  
+ Reduces accidents and injuries  
+ Legal liability protection
 
 ### Accountability
-✅ Clear audit trail of who can access what  
-✅ Training requirements enforced automatically  
-✅ Easy to revoke access if needed
+ Clear audit trail of who can access what  
+ Training requirements enforced automatically  
+ Easy to revoke access if needed
 
 ### Organization
-✅ Structured onboarding for new members  
-✅ Progressive skill-level system  
-✅ Encourages training participation
+ Structured onboarding for new members  
+ Progressive skill-level system  
+ Encourages training participation
 
 ### Flexibility
-✅ Easy to add/remove requirements  
-✅ Granular control per tool  
-✅ Role hierarchy support
+ Easy to add/remove requirements  
+ Granular control per tool  
+ Role hierarchy support
 
 ---
 
@@ -503,7 +503,7 @@ CREATE TABLE permission_audit_log (
 
 ---
 
-## ✅ Next Steps
+##  Next Steps
 
 1. Review and approve this design
 2. Create database migration script

@@ -39,7 +39,7 @@ def main():
         Base.metadata.create_all(engine, checkfirst=True)
         print("  ✓ Created consecutive_signout_tracker")
         print("  ✓ Created consecutive_signout_exemptions")
-        print("\n✅ Tables fixed successfully!")
+        print("\n Tables fixed successfully!")
         return 0
     except Exception as e:
         print(f"\n❌ Error recreating tables: {e}", file=sys.stderr)

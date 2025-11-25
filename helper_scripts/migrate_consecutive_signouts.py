@@ -34,7 +34,7 @@ def main():
         new_tables.append('consecutive_signout_exemptions')
     
     if not new_tables:
-        print("\n✅ All tables already exist. No migration needed.")
+        print("\n All tables already exist. No migration needed.")
         return 0
     
     print(f"\n📝 Creating new tables: {', '.join(new_tables)}")
@@ -43,7 +43,7 @@ def main():
     try:
         # This will only create tables that don't exist
         Base.metadata.create_all(engine, checkfirst=True)
-        print("\n✅ Migration completed successfully!")
+        print("\n Migration completed successfully!")
         print("\nNew features added:")
         print("  • Consecutive signout limits per tool")
         print("  • Cooldown periods after reaching limit")

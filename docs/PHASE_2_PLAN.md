@@ -18,7 +18,7 @@ Phase 2 focuses on user experience improvements and feature enhancements that pr
 
 **Priority:** HIGH  
 **Estimated Time:** 1 week  
-**Dependencies:** Database (✅), Discord DMs
+**Dependencies:** Database (), Discord DMs
 
 #### Features
 
@@ -84,7 +84,7 @@ async def notification_task():
 
 **Priority:** MEDIUM  
 **Estimated Time:** 4 days  
-**Dependencies:** Database (✅), Statistics tables (✅)
+**Dependencies:** Database (), Statistics tables ()
 
 #### Features
 
@@ -190,7 +190,7 @@ pip install pytesseract
 
 **Priority:** MEDIUM-HIGH  
 **Estimated Time:** 5 days  
-**Dependencies:** Database (✅), Time parsing (✅)
+**Dependencies:** Database (), Time parsing ()
 
 #### Features
 
@@ -237,7 +237,7 @@ CREATE TABLE recurring_reservations (
 📅 Calendar for Tool: CNC Router (Next 7 Days)
 
 Mon 11/25
-├─ 09:00-12:00 ✅ @mmennelle
+├─ 09:00-12:00  @mmennelle
 └─ 14:00-17:00 🔄 @benner81
 
 Tue 11/26
@@ -373,7 +373,7 @@ pip install pytesseract
 
 ## Next Steps
 
-1. ✅ Review and approve Phase 2 plan
+1.  Review and approve Phase 2 plan
 2. Create database migration for new tables
 3. Implement notifications module (Week 1)
 4. Begin analytics module (Week 2)

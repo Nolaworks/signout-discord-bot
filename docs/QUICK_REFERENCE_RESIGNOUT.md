@@ -71,10 +71,10 @@ You can sign out after:
 
 ## Important Notes
 
-✅ **Admins are exempt** - You can always sign out
-✅ **Auto-reset** - Count resets when others use the tool
-✅ **Tool-specific** - Each tool has its own limit
-✅ **No limit by default** - Must explicitly configure
+ **Admins are exempt** - You can always sign out
+ **Auto-reset** - Count resets when others use the tool
+ **Tool-specific** - Each tool has its own limit
+ **No limit by default** - Must explicitly configure
 
 ## Troubleshooting
 

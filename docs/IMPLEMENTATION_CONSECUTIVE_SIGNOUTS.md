@@ -79,13 +79,13 @@ consecutive_signout_tracker
 
 ## Key Features
 
-✅ **Per-Tool Configuration** - Each tool can have different limits
-✅ **Cooldown Periods** - Configurable wait time after hitting limit
-✅ **Admin Exemption** - Admins bypass all limits
-✅ **Automatic Reset** - Count resets when others use the tool
-✅ **Admin Override** - `/clearcooldown` for emergencies
-✅ **Monitoring Tools** - View limits and current cooldowns
-✅ **User-Friendly Messages** - Clear error messages with cooldown expiry time
+ **Per-Tool Configuration** - Each tool can have different limits
+ **Cooldown Periods** - Configurable wait time after hitting limit
+ **Admin Exemption** - Admins bypass all limits
+ **Automatic Reset** - Count resets when others use the tool
+ **Admin Override** - `/clearcooldown` for emergencies
+ **Monitoring Tools** - View limits and current cooldowns
+ **User-Friendly Messages** - Clear error messages with cooldown expiry time
 
 ## Migration
 

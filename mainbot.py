@@ -545,7 +545,7 @@ async def help_cmd(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="✅ Return a Tool",
+        name=" Return a Tool",
         value=(
             "`/returntool reservation:<pick> [photo]`\n"
             "Mark your reservation as complete and return the tool.\n\n"
@@ -828,6 +828,19 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             channel_name=interaction.channel.name,
             is_tool_room=is_tool_room_channel(interaction.channel)
         )
+        
+        # Check role requirement (unless admin)
+        if not is_admin and tool.role_required and tool.role_id:
+            from discord_utils import user_has_tool_role
+            
+            if not user_has_tool_role(interaction.user, tool.role_id):
+                await interaction.followup.send(
+                    f"❌ You need the <@&{tool.role_id}> role to sign out **{tool_name}**.\n\n"
+                    f"Please contact an admin to get access to this tool.",
+                    ephemeral=True
+                )
+                logger.info(f"Role requirement blocked {username} from signing out {tool_name}")
+                return
         
         # Check consecutive signout limit (unless admin)
         if not is_admin:
@@ -1115,11 +1128,22 @@ async def on_guild_channel_create(channel):
             channel_name=channel.name
         )
         
+        # Create Discord role for the tool
+        from discord_utils import get_or_create_tool_role
+        role = await get_or_create_tool_role(channel.guild, tool_name)
+        
+        if role:
+            # Link role to tool (disabled by default)
+            tool_repo.set_role(tool_name, str(role.id), False)
+            logger.info(f"Auto-created tool '{tool_name}' with role {role.id} from channel '{channel.name}'")
+        else:
+            logger.warning(f"Auto-created tool '{tool_name}' but role creation failed")
+        
         session.commit()
-        logger.info(f"Auto-created tool '{tool_name}' from channel '{channel.name}'")
         
         # Send welcome message
-        await channel.send(f"Tool '{tool_name}' has been added for reservations.")
+        role_msg = f"\n🎭 Role created: {role.mention} (use `/togglerole` to enable requirement)" if role else ""
+        await channel.send(f"Tool '{tool_name}' has been added for reservations.{role_msg}")
 
 
 @bot.event

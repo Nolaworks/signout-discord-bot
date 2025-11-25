@@ -126,6 +126,26 @@ class ToolRepository:
             tool.updated_at = datetime.utcnow()
             return True
         return False
+    
+    def set_role(self, name: str, role_id: str, role_required: bool = True) -> bool:
+        """Set Discord role for a tool"""
+        tool = self.get_by_name(name)
+        if tool:
+            tool.role_id = role_id
+            tool.role_required = role_required
+            tool.updated_at = datetime.utcnow()
+            return True
+        return False
+    
+    def get_role_id(self, name: str) -> Optional[str]:
+        """Get the role ID for a tool"""
+        tool = self.get_by_name(name)
+        return tool.role_id if tool else None
+    
+    def is_role_required(self, name: str) -> bool:
+        """Check if role is required for a tool"""
+        tool = self.get_by_name(name)
+        return tool.role_required if tool else False
 
 
 class ReservationRepository:
