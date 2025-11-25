@@ -3,6 +3,7 @@
 import discord
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -27,12 +28,16 @@ from notifications import NotificationManager
 # Load configuration
 config = get_config()
 
-# Enable logging
+# Enable logging with rotation (keep 1 week of logs)
 logging.basicConfig(
     level=getattr(logging, config.log_level),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(config.log_file),
+        RotatingFileHandler(
+            config.log_file,
+            maxBytes=10*1024*1024,  # 10MB per file
+            backupCount=7  # Keep 7 files (1 week of daily logs)
+        ),
         logging.StreamHandler()
     ]
 )
@@ -176,8 +181,16 @@ async def notification_preferences(
 ):
     """Manage notification preferences"""
     user_id = get_user_id(interaction.user)
+    username = interaction.user.name
     
     with get_db_session() as session:
+        # Ensure user exists in database
+        user_repo = UserRepository(session)
+        user = user_repo.get_by_user_id(user_id)
+        if not user:
+            user = user_repo.create(user_id, username)
+            session.flush()
+        
         prefs = notification_manager.get_preferences(session, user_id)
         
         # Update preferences if provided
@@ -250,6 +263,13 @@ async def waitlist_command(interaction: discord.Interaction, action: str):
     username = interaction.user.name
     
     with get_db_session() as session:
+        # Ensure user exists in database (needed for foreign key)
+        user_repo = UserRepository(session)
+        user = user_repo.get_by_user_id(user_id)
+        if not user:
+            user = user_repo.create(user_id, username)
+            session.flush()
+        
         tool_repo = ToolRepository(session)
         tool = tool_repo.get_by_name(tool_name)
         

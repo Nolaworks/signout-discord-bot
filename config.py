@@ -17,44 +17,39 @@ class BotConfig:
     # Required fields (no defaults) - must come first
     discord_token: str
     openai_api_key: str
-    
+    database_url: str  # No default - must be provided via environment
+
     # Discord settings
     command_prefix: str = "!"
-    
+
     # OpenAI settings
     openai_model: str = "gpt-4o"
     openai_mini_model: str = "gpt-4o-mini"
-    
+
     # Database settings
-    database_url: str = "sqlite:///signout_bot.db"
     database_echo: bool = False
-    
-    # File paths (for migration/backup)
-    tools_file: str = "tools.json"
-    history_file: str = "history.csv"
-    settings_file: str = "settings.json"
-    
+
     # Admin roles
     admin_roles: Set[str] = None
-    
+
     # Tool settings
     default_max_time_hours: int = 168  # 1 week
-    
+
     # Feature flags
     require_photo_in_tool_room: bool = True
     allow_general_chat_in_signout_channels: bool = False
     auto_create_tools_from_channels: bool = True
-    
+
     # Cleanup settings
     cleanup_interval_minutes: int = 1
-    
+
     # Timezone
     timezone: str = "America/Chicago"
-    
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "bot.log"
-    
+
     def __post_init__(self):
         if self.admin_roles is None:
             self.admin_roles = {"Admin", "Moderator", "Board Member"}
@@ -72,6 +67,10 @@ def load_config() -> BotConfig:
     if not openai_api_key:
         raise ValueError("OPENAI_API_KEY environment variable is required")
     
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL environment variable is required")
+    
     # Get optional variables with defaults
     config = BotConfig(
         discord_token=discord_token,
@@ -79,7 +78,7 @@ def load_config() -> BotConfig:
         command_prefix=os.getenv("COMMAND_PREFIX", "!"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
         openai_mini_model=os.getenv("OPENAI_MINI_MODEL", "gpt-4o-mini"),
-        database_url=os.getenv("DATABASE_URL", "sqlite:///signout_bot.db"),
+        database_url=database_url,
         database_echo=os.getenv("DATABASE_ECHO", "false").lower() == "true",
         default_max_time_hours=int(os.getenv("DEFAULT_MAX_TIME_HOURS", "168")),
         cleanup_interval_minutes=int(os.getenv("CLEANUP_INTERVAL_MINUTES", "1")),
