@@ -16,7 +16,7 @@ from gptparse import parse_time_with_gpt
 from time_utils import parse_time_range, get_now, calculate_duration_hours, CENTRAL_TZ
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
-    user_is_admin, get_user_display_name, get_user_id,
+    user_is_admin, user_is_developer, get_user_display_name, get_user_id,
     validate_photo_requirement, get_photo_url, is_tool_room_channel
 )
 from validation import validate_time_input, validate_comment
@@ -674,13 +674,13 @@ async def help_cmd(interaction: discord.Interaction):
     )
     
     return_photo_req = (
-        "\n\n⚠️ **Photo Required:** Must attach image when returning\n"
+        "\n\n**Photo Required:** Must attach image when returning\n"
     ) if is_tool_room else (
-        "\n\n📷 Photo optional but recommended to show tool condition\n"
+        "\n\nPhoto optional but recommended to show tool condition\n"
     )
     
     embed.add_field(
-        name=" Return a Tool",
+        name="Return a Tool",
         value=(
             "`/returntool reservation:<pick> [photo]`\n"
             "Mark your reservation as complete and return the tool.\n\n"
@@ -691,7 +691,7 @@ async def help_cmd(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="❌ Cancel a Reservation",
+        name="Cancel a Reservation",
         value=(
             "`/cancel reservation:<pick>`\n"
             "Cancel a reservation you no longer need.\n\n"
@@ -701,7 +701,7 @@ async def help_cmd(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="💬 Post Comments",
+        name="Post Comments",
         value="`/comment comment:<text>` - Share notes with others",
         inline=False
     )
@@ -766,17 +766,20 @@ async def admin_help_cmd(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="Admin Commands Reference",
-        description="Complete list of administrator commands",
+        description="Complete list of administrator commands\n\n**Commands are now organized into groups!**",
         color=discord.Color.gold()
     )
     
     # Tool Management
     embed.add_field(
-        name=" Tool Management",
+        name="Tool Management",
         value=(
-            "`/addtool tool:<name> [max_hours]` - Add a new tool\n"
-            "`/removetool tool:<name>` - Remove a tool\n"
-            "`/maxtime hours:<int>` - Set max hours for current tool"
+            "`/admin tool add name:<tool> [max_hours] [role_required]` - Add a new tool\n"
+            "  • Role requirement enabled by default for security\n"
+            "  • Tools in Tool Room auto-flagged for photo requirements\n"
+            "`/admin tool remove name:<tool>` - Remove a tool\n"
+            "`/admin tool maxtime hours:<int>` - Set max hours for current tool\n\n"
+            "*Old commands still work: /addtool, /removetool, /maxtime*"
         ),
         inline=False
     )
@@ -785,50 +788,69 @@ async def admin_help_cmd(interaction: discord.Interaction):
     embed.add_field(
         name="Reservation Management",
         value=(
-            "`/clearreservations` - Clear all reservations for current tool\n"
-            "`/forcereturn` - Force return the current reservation\n\n"
-            "`/adjusttime_admin` - Edit another user's reservation\n"
-            "  • `user:<name>` - Select user from autocomplete\n"
-            "  • `old_time:<text>` - Select their reservation\n"
-            "  • `choice:<start|end|range>` - What to change:\n"
-            "    - `start`: Change start time only\n"
-            "    - `end`: Change end time only\n"
-            "    - `range`: Change entire time range\n"
-            "  • `new_value:<text>` - New time (e.g., '2pm' or '2pm-4pm')"
+            "`/admin reservation clear` - Clear all for current tool\n"
+            "`/admin reservation forcereturn` - Force return current\n"
+            "`/admin reservation adjust` - Edit another user's reservation\n\n"
+            "*Old commands still work: /clearreservations, /forcereturn, /adjusttime_admin*"
         ),
         inline=False
     )
     
     # Admin Blocks
     embed.add_field(
-        name="🚫 Admin Blocks",
+        name="Admin Blocks",
         value=(
-            "`/adblock tool:<name> time:<range> [force]` - Block tool(s)\n"
-            "  └ Use `[All Tools]` to block everything\n"
-            "`/adunblock block:<select>` - Remove an admin block\n"
-            "`/listblocks` - Show all active admin blocks"
+            "`/admin block add tool:<select> time:<range> [force]` - Block tool(s)\n"
+            "  • Select `[All Tools]` from dropdown to block everything\n"
+            "  • Use `force:true` to override existing reservations\n"
+            "`/admin block remove block:<select>` - Remove a block\n"
+            "`/admin block list` - Show all active blocks\n\n"
+            "*Old commands still work: /adblock, /adunblock, /listblocks*"
         ),
         inline=False
     )
     
     # Consecutive Signout Limits
     embed.add_field(
-        name="🔄 Re-Signout Limits",
+        name="Re-Signout Limits",
         value=(
-            "`/setresignoutlimit max:<int> cooldown:<hours>` - Set max consecutive signouts\n"
-            "`/viewresignoutlimits` - View all configured limits\n"
-            "`/checkcooldowns` - See who's in cooldown for current tool\n"
-            "`/clearcooldown user:<name>` - Reset a user's cooldown\n"
-            "`/exemptuser user:<name> [duration] [reason]` - Exempt user from limits\n"
-            "`/removeexemption user:<name>` - Remove user's exemption\n"
-            "`/listexemptions` - View all exempted users for current tool"
+            "`/admin limit set max:<int> cooldown:<hours>` - Set limits\n"
+            "`/admin limit view` - View all configured limits\n"
+            "`/admin limit check` - See who's in cooldown\n"
+            "`/admin limit clear user:<name>` - Reset cooldown\n\n"
+            "*Old commands still work: /setresignoutlimit, /checkcooldowns, etc.*"
+        ),
+        inline=False
+    )
+    
+    # Exemptions
+    embed.add_field(
+        name="Exemptions",
+        value=(
+            "`/admin exempt add user:<name>` - Exempt from limits\n"
+            "`/admin exempt remove user:<name>` - Remove exemption\n"
+            "`/admin exempt list` - View all exemptions\n\n"
+            "*Old commands still work: /exemptuser, /removeexemption, /listexemptions*"
+        ),
+        inline=False
+    )
+    
+    # Role Management
+    embed.add_field(
+        name="Role Management",
+        value=(
+            "`/admin role toggle` - Enable/disable role requirement\n"
+            "`/admin role assign user:<name>` - Give tool access\n"
+            "`/admin role revoke user:<name>` - Remove tool access\n"
+            "`/admin role sync` - Sync all tool roles\n\n"
+            "*Old commands still work: /togglerole, /assignrole, /revokerole, /syncroles*"
         ),
         inline=False
     )
     
     # Notifications
     embed.add_field(
-        name="🔔 Notifications",
+        name="Notifications",
         value=(
             "`/testnotify` - Test notification system\n"
             "`/adminsummary` - Send daily summary to all admins"
@@ -840,9 +862,10 @@ async def admin_help_cmd(interaction: discord.Interaction):
     embed.add_field(
         name="Logging & Debug",
         value=(
-            "`/loglevel level:<DEBUG|INFO|WARNING|ERROR>` - Set log level\n"
-            "`/taillogs [lines]` - View recent log entries\n"
-            "`/watchlogs enable:<true|false>` - Stream logs to channel"
+            "`/debug logs level level:<DEBUG|INFO|WARNING|ERROR>` - Set log level\n"
+            "`/debug logs tail [lines]` - View recent log entries\n"
+            "`/debug logs watch enable:<true|false>` - Stream logs to channel\n\n"
+            "*Old commands still work: /loglevel, /taillogs, /watchlogs*"
         ),
         inline=False
     )
@@ -851,12 +874,17 @@ async def admin_help_cmd(interaction: discord.Interaction):
     embed.add_field(
         name="Admin Tips",
         value=(
+            "• **Commands organized into groups** - Type `/admin` or `/debug` to see all options\n"
             "• **Admin blocks** prevent users from reserving during that time\n"
-            "• Use `force:true` in `/adblock` to override existing reservations\n"
+            "  - Use `[All Tools]` option to block everything at once\n"
+            "  - Use `force:true` to override existing reservations\n"
             "• **Notifications** are sent 15 min before start/end of reservations\n"
             "• **Tool Room channels** enforce photo requirements automatically\n"
             "  - Bot rejects signout/return commands without photos\n"
             "  - Regular channels make photos optional\n"
+            "• **Role requirements** enabled by default for new tools\n"
+            "  - Admins bypass role checks automatically\n"
+            "  - Use `/admin role toggle` to disable for a tool\n"
             "• **Re-signout limits** prevent users from monopolizing tools\n"
             "  - Set per-tool limits to give everyone a fair chance\n"
             "  - Admins are exempt from these limits\n"
@@ -1256,12 +1284,17 @@ async def on_guild_channel_create(channel):
             logger.info(f"Tool '{tool_name}' already exists for channel '{channel.name}'")
             return
         
-        # Create new tool
+        # Check if channel is in Tool Room
+        from discord_utils import is_tool_room_channel
+        is_tool_room = is_tool_room_channel(channel)
+        
+        # Create new tool with is_tool_room flag
         tool = tool_repo.get_or_create(
             name=tool_name,
             max_time_hours=config.default_max_time_hours,
             channel_id=str(channel.id),
-            channel_name=channel.name
+            channel_name=channel.name,
+            is_tool_room=is_tool_room
         )
         
         # Create Discord role for the tool
@@ -1269,17 +1302,18 @@ async def on_guild_channel_create(channel):
         role = await get_or_create_tool_role(channel.guild, tool_name)
         
         if role:
-            # Link role to tool (disabled by default)
-            tool_repo.set_role(tool_name, str(role.id), False)
-            logger.info(f"Auto-created tool '{tool_name}' with role {role.id} from channel '{channel.name}'")
+            # Link role to tool (enabled by default)
+            tool_repo.set_role(tool_name, str(role.id), True)
+            logger.info(f"Auto-created tool '{tool_name}' with role {role.id}, is_tool_room={is_tool_room} from channel '{channel.name}'")
         else:
             logger.warning(f"Auto-created tool '{tool_name}' but role creation failed")
         
         session.commit()
         
         # Send welcome message
-        role_msg = f"\nRole created: {role.mention} (use `/togglerole` to enable requirement)" if role else ""
-        await channel.send(f"Tool '{tool_name}' has been added for reservations.{role_msg}")
+        tool_room_note = "\n🏠 This is a Tool Room channel - photo requirements will apply." if is_tool_room else ""
+        role_msg = f"\nRole created: {role.mention} (role requirement is **enabled**)" if role else ""
+        await channel.send(f"Tool '{tool_name}' has been added for reservations.{role_msg}{tool_room_note}")
 
 
 @bot.event

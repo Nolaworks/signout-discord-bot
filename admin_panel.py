@@ -83,6 +83,63 @@ class AdminPanel(commands.Cog):
 
         # Background sender for watched logs
         self._drain_log_queue.start()
+    
+    # Main parent groups
+    admin_group = app_commands.Group(
+        name="admin",
+        description="[ADMIN] Administrative commands",
+        default_permissions=discord.Permissions(administrator=True)
+    )
+    
+    debug_group = app_commands.Group(
+        name="debug",
+        description="[DEV] Developer debugging commands",
+        default_permissions=discord.Permissions(administrator=True)
+    )
+    
+    # Subgroups under /admin
+    tool_group = app_commands.Group(
+        name="tool",
+        description="Tool management",
+        parent=admin_group
+    )
+    
+    limit_group = app_commands.Group(
+        name="limit",
+        description="Consecutive signout limits",
+        parent=admin_group
+    )
+    
+    exempt_group = app_commands.Group(
+        name="exempt", 
+        description="User exemptions from limits",
+        parent=admin_group
+    )
+    
+    role_group = app_commands.Group(
+        name="role",
+        description="Tool role requirements", 
+        parent=admin_group
+    )
+    
+    block_group = app_commands.Group(
+        name="block",
+        description="Admin blocking",
+        parent=admin_group
+    )
+    
+    reservation_group = app_commands.Group(
+        name="reservation",
+        description="Reservation management",
+        parent=admin_group
+    )
+    
+    # Subgroups under /debug
+    logs_group = app_commands.Group(
+        name="logs",
+        description="Log management",
+        parent=debug_group
+    )
 
     def cog_unload(self):
         """Cleanup on cog unload"""
@@ -202,7 +259,7 @@ class AdminPanel(commands.Cog):
 
     # ========== Tool Management Commands ==========
 
-    @app_commands.command(name="addtool", description="Admin: Add a tool manually")
+    @app_commands.command(name="addtool", description="[ADMIN] Add a tool manually")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(tool="Tool name", max_hours="Maximum reservation hours (default: 168)")
@@ -216,6 +273,10 @@ class AdminPanel(commands.Cog):
         
         await interaction.response.defer(ephemeral=True, thinking=True)
         
+        # Check if channel is in Tool Room
+        from discord_utils import is_tool_room_channel
+        is_tool_room = is_tool_room_channel(interaction.channel)
+        
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
             
@@ -227,25 +288,26 @@ class AdminPanel(commands.Cog):
                 )
                 return
             
-            # Create the tool
-            tool_obj = tool_repo.get_or_create(name=tool, max_time_hours=max_hours)
+            # Create the tool with is_tool_room flag
+            tool_obj = tool_repo.get_or_create(name=tool, max_time_hours=max_hours, is_tool_room=is_tool_room)
             
             # Create Discord role for the tool
             from discord_utils import get_or_create_tool_role
             role = await get_or_create_tool_role(interaction.guild, tool)
             
             if role:
-                # Link role to tool (disabled by default)
-                tool_repo.set_role(tool, str(role.id), False)
+                # Link role to tool (enabled by default)
+                tool_repo.set_role(tool, str(role.id), True)
                 session.commit()
                 
+                tool_room_note = "\n🏠 Tool Room detected - photo requirements will apply." if is_tool_room else ""
                 await interaction.followup.send(
                     f" Tool `{tool}` has been added with max time {max_hours}h.\n\n"
                     f"🎭 Created role: {role.mention}\n"
-                    f"ℹ️ Role requirement is **disabled** by default. Use `/togglerole` to enable.",
+                    f" Role requirement is **enabled** by default.{tool_room_note}",
                     ephemeral=True
                 )
-                logger.info(f"Admin {interaction.user.name} added tool: {tool} with role {role.id}")
+                logger.info(f"Admin {interaction.user.name} added tool: {tool} with role {role.id}, is_tool_room={is_tool_room}")
             else:
                 # Tool created but role creation failed
                 session.commit()
@@ -256,7 +318,7 @@ class AdminPanel(commands.Cog):
                 )
                 logger.warning(f"Admin {interaction.user.name} added tool: {tool}, but role creation failed")
 
-    @app_commands.command(name="removetool", description="Admin: Remove a tool")
+    @app_commands.command(name="removetool", description="[ADMIN] Remove a tool")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(tool="Tool name")
@@ -346,7 +408,7 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message(msg)
             logger.info(f"Admin {interaction.user.name} removed tool: {tool}")
 
-    @app_commands.command(name="maxtime", description="Admin: Set maximum sign-out time for a tool")
+    @app_commands.command(name="maxtime", description="[ADMIN] Set maximum sign-out time for a tool")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(hours="Max sign-out duration in hours")
@@ -384,7 +446,7 @@ class AdminPanel(commands.Cog):
 
     # ========== Reservation Management Commands ==========
 
-    @app_commands.command(name="clearreservations", description="Admin: Clear all reservations for a tool")
+    @app_commands.command(name="clearreservations", description="[ADMIN] Clear all reservations for a tool")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def clear_reservations(self, interaction: discord.Interaction):
@@ -422,7 +484,7 @@ class AdminPanel(commands.Cog):
             )
             logger.info(f"Admin {interaction.user.name} cleared {len(reservations)} reservations for {tool_name}")
 
-    @app_commands.command(name="forcereturn", description="Admin: Force return a tool")
+    @app_commands.command(name="forcereturn", description="[ADMIN] Force return a tool")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def force_return(self, interaction: discord.Interaction):
@@ -465,6 +527,7 @@ class AdminPanel(commands.Cog):
     # ========== Adjust Time Commands ==========
 
     @app_commands.command(name="adjusttime", description="Adjust your reservation: change start, end, or range")
+    @app_commands.default_permissions(administrator=False)
     @app_commands.describe(
         old_time="Existing reservation time",
         choice="Part to change",
@@ -482,7 +545,7 @@ class AdminPanel(commands.Cog):
         """Adjust user's own reservation"""
         await self._adjust_time_core(interaction, old_time, choice.value, new_value, merge=merge)
 
-    @app_commands.command(name="adjusttime_admin", description="Admin: Adjust another user's reservation")
+    @app_commands.command(name="adjusttime_admin", description="[ADMIN] Adjust another user's reservation")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     @app_commands.describe(
@@ -684,7 +747,7 @@ class AdminPanel(commands.Cog):
             logger.error(f"Error in admin_block_autocomplete: {e}")
             return []
 
-    @app_commands.command(name="adblock", description="Admin: Block tool(s) for a time range")
+    @app_commands.command(name="adblock", description="[ADMIN] Block tool(s) for a time range")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         tool="Select tool to block, or [All Tools]",
@@ -826,7 +889,7 @@ class AdminPanel(commands.Cog):
             
             logger.info(f"Admin {interaction.user.name} created admin block: {formatted_time}")
 
-    @app_commands.command(name="adunblock", description="Admin: Remove selected admin block(s)")
+    @app_commands.command(name="adunblock", description="[ADMIN] Remove selected admin block(s)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(block="Select admin block to remove")
     @app_commands.autocomplete(block=admin_block_autocomplete)
@@ -869,7 +932,7 @@ class AdminPanel(commands.Cog):
             )
             logger.info(f"Admin {interaction.user.name} removed admin block: {tool_name} - {formatted_time}")
 
-    @app_commands.command(name="listblocks", description="Admin: Show active/upcoming admin blocks per tool")
+    @app_commands.command(name="listblocks", description="[ADMIN] Show active/upcoming admin blocks per tool")
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def list_blocks(self, interaction: discord.Interaction):
@@ -1332,7 +1395,8 @@ class AdminPanel(commands.Cog):
 
     # ========== Role Management Commands ==========
 
-    @app_commands.command(name="togglerole", description="Toggle role requirement for current tool")
+    @app_commands.command(name="togglerole", description="[ADMIN] Toggle role requirement for current tool")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def togglerole(self, interaction: discord.Interaction):
         """Toggle whether a role is required to sign out the current tool"""
@@ -1394,7 +1458,8 @@ class AdminPanel(commands.Cog):
                 )
                 logger.info(f"Toggled role requirement for {tool_name}: {new_state}")
 
-    @app_commands.command(name="assignrole", description="Give a user access to the current tool")
+    @app_commands.command(name="assignrole", description="[ADMIN] Give a user access to the current tool")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="User to give tool access")
     @is_admin_check()
     async def assignrole(self, interaction: discord.Interaction, user: discord.Member):
@@ -1462,7 +1527,8 @@ class AdminPanel(commands.Cog):
                     ephemeral=True
                 )
 
-    @app_commands.command(name="revokerole", description="Remove a user's access to the current tool")
+    @app_commands.command(name="revokerole", description="[ADMIN] Remove a user's access to the current tool")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="User to revoke tool access from")
     @is_admin_check()
     async def revokerole(self, interaction: discord.Interaction, user: discord.Member):
@@ -1528,7 +1594,8 @@ class AdminPanel(commands.Cog):
                     ephemeral=True
                 )
 
-    @app_commands.command(name="syncroles", description="Sync all tool roles with the database")
+    @app_commands.command(name="syncroles", description="[ADMIN] Sync all tool roles with the database")
+    @app_commands.default_permissions(administrator=True)
     @is_admin_check()
     async def syncroles(self, interaction: discord.Interaction):
         """Create Discord roles for all tools that don't have them"""
@@ -1606,6 +1673,205 @@ class AdminPanel(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             logger.info(f"Role sync completed: {len(created)} created, {len(updated)} updated, {len(errors)} errors")
 
+    # ========== NEW NESTED GROUPED COMMANDS (Mobile-Friendly) ==========
+    
+    # ===== /admin tool group commands =====
+    
+    @tool_group.command(name="add", description="Add a tool manually")
+    @app_commands.describe(tool="Tool name", max_hours="Maximum reservation hours (default: 168)")
+    @is_admin_check()
+    async def tool_add(self, interaction: discord.Interaction, tool: str, max_hours: int = 168):
+        """Add tool - nested grouped version"""
+        await self.add_tool.callback(self, interaction, tool, max_hours)
+    
+    @tool_group.command(name="remove", description="Remove a tool")
+    @app_commands.describe(tool="Tool name")
+    @is_admin_check()
+    async def tool_remove(self, interaction: discord.Interaction, tool: str):
+        """Remove tool - nested grouped version"""
+        await self.remove_tool.callback(self, interaction, tool)
+    
+    @tool_group.command(name="maxtime", description="Set maximum sign-out time for a tool")
+    @app_commands.describe(hours="Max sign-out duration in hours")
+    @is_admin_check()
+    async def tool_maxtime(self, interaction: discord.Interaction, hours: int):
+        """Set max time - nested grouped version"""
+        await self.set_max_time.callback(self, interaction, hours)
+    
+    # ===== /admin limit group commands =====
+    
+    @limit_group.command(name="set", description="Set max consecutive re-signouts for current tool")
+    @app_commands.describe(
+        max_consecutive="Maximum times a user can sign out this tool in a row (0 = no limit)",
+        cooldown_hours="Hours user must wait after reaching limit"
+    )
+    @is_admin_check()
+    async def limit_set(self, interaction: discord.Interaction, max_consecutive: int, cooldown_hours: int):
+        """Set consecutive signout limit - nested grouped version"""
+        await self.set_resignout_limit.callback(self, interaction, max_consecutive, cooldown_hours)
+    
+    @limit_group.command(name="view", description="View all configured re-signout limits")
+    @is_admin_check()
+    async def limit_view(self, interaction: discord.Interaction):
+        """View all limits - nested grouped version"""
+        await self.view_resignout_limits.callback(self, interaction)
+    
+    @limit_group.command(name="check", description="View users in cooldown for current tool")
+    @is_admin_check()
+    async def limit_check(self, interaction: discord.Interaction):
+        """Check cooldowns - nested grouped version"""
+        await self.check_cooldowns.callback(self, interaction)
+    
+    @limit_group.command(name="clear", description="Clear cooldown for a user on current tool")
+    @app_commands.describe(username="Username to clear cooldown for")
+    @app_commands.autocomplete(username=user_autocomplete)
+    @is_admin_check()
+    async def limit_clear(self, interaction: discord.Interaction, username: str):
+        """Clear cooldown - nested grouped version"""
+        await self.clear_cooldown.callback(self, interaction, username)
+    
+    # ===== /admin exempt group commands =====
+    
+    @exempt_group.command(name="add", description="Exempt a user from re-signout limits for current tool")
+    @app_commands.describe(
+        username="Username to exempt",
+        duration_hours="Hours exemption lasts (leave empty for permanent)",
+        reason="Reason for exemption (optional)"
+    )
+    @app_commands.autocomplete(username=user_autocomplete)
+    @is_admin_check()
+    async def exempt_add(self, interaction: discord.Interaction, username: str, 
+                        duration_hours: int = None, reason: str = None):
+        """Add exemption - nested grouped version"""
+        await self.exempt_user.callback(self, interaction, username, duration_hours, reason)
+    
+    @exempt_group.command(name="remove", description="Remove user exemption from re-signout limits")
+    @app_commands.describe(username="Username to remove exemption from")
+    @app_commands.autocomplete(username=user_autocomplete)
+    @is_admin_check()
+    async def exempt_remove(self, interaction: discord.Interaction, username: str):
+        """Remove exemption - nested grouped version"""
+        await self.remove_exemption.callback(self, interaction, username)
+    
+    @exempt_group.command(name="list", description="View all users with exemptions for current tool")
+    @is_admin_check()
+    async def exempt_list(self, interaction: discord.Interaction):
+        """List exemptions - nested grouped version"""
+        await self.list_exemptions.callback(self, interaction)
+    
+    # ===== /admin role group commands =====
+    
+    @role_group.command(name="toggle", description="Toggle role requirement for current tool")
+    @is_admin_check()
+    async def role_toggle(self, interaction: discord.Interaction):
+        """Toggle role requirement - nested grouped version"""
+        await self.togglerole.callback(self, interaction)
+    
+    @role_group.command(name="assign", description="Give a user access to the current tool")
+    @app_commands.describe(user="User to give tool access")
+    @is_admin_check()
+    async def role_assign(self, interaction: discord.Interaction, user: discord.Member):
+        """Assign role - nested grouped version"""
+        await self.assignrole.callback(self, interaction, user)
+    
+    @role_group.command(name="revoke", description="Remove a user's access to the current tool")
+    @app_commands.describe(user="User to revoke tool access from")
+    @is_admin_check()
+    async def role_revoke(self, interaction: discord.Interaction, user: discord.Member):
+        """Revoke role - nested grouped version"""
+        await self.revokerole.callback(self, interaction, user)
+    
+    @role_group.command(name="sync", description="Sync all tool roles with the database")
+    @is_admin_check()
+    async def role_sync(self, interaction: discord.Interaction):
+        """Sync roles - nested grouped version"""
+        await self.syncroles.callback(self, interaction)
+    
+    # ===== /admin block group commands =====
+    
+    @block_group.command(name="add", description="Block tool(s) for a time range")
+    @app_commands.describe(
+        tool="Select tool to block, or [All Tools]",
+        time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
+        force="If true, override overlapping future reservations"
+    )
+    @app_commands.autocomplete(tool=tool_autocomplete)
+    @is_admin_check()
+    async def block_add(self, interaction: discord.Interaction, tool: str, time: str, force: bool = False):
+        """Add block - nested grouped version"""
+        await self.admin_block_all.callback(self, interaction, tool, time, force)
+    
+    @block_group.command(name="remove", description="Remove selected admin block(s)")
+    @app_commands.describe(block="Select admin block to remove")
+    @app_commands.autocomplete(block=admin_block_autocomplete)
+    @is_admin_check()
+    async def block_remove(self, interaction: discord.Interaction, block: str):
+        """Remove block - nested grouped version"""
+        await self.admin_unblock_all.callback(self, interaction, block)
+    
+    @block_group.command(name="list", description="Show active/upcoming admin blocks per tool")
+    @is_admin_check()
+    async def block_list(self, interaction: discord.Interaction):
+        """List blocks - nested grouped version"""
+        await self.list_blocks.callback(self, interaction)
+    
+    # ===== /admin reservation group commands =====
+    
+    @reservation_group.command(name="clear", description="Clear all reservations for a tool")
+    @is_admin_check()
+    async def reservation_clear(self, interaction: discord.Interaction):
+        """Clear reservations - nested grouped version"""
+        await self.clear_reservations.callback(self, interaction)
+    
+    @reservation_group.command(name="forcereturn", description="Force return a tool")
+    @is_admin_check()
+    async def reservation_forcereturn(self, interaction: discord.Interaction):
+        """Force return - nested grouped version"""
+        await self.force_return.callback(self, interaction)
+    
+    @reservation_group.command(name="adjust", description="Adjust another user's reservation")
+    @app_commands.describe(
+        user="Target username",
+        old_time="Existing reservation time",
+        choice="Part to change",
+        new_value="New time or 'cancel'",
+        merge="Merge if it overlaps their own reservation"
+    )
+    @app_commands.choices(choice=[
+        app_commands.Choice(name="start", value="start"),
+        app_commands.Choice(name="end", value="end"),
+        app_commands.Choice(name="range", value="range"),
+    ])
+    @app_commands.autocomplete(user=user_autocomplete, old_time=reservation_autocomplete)
+    @is_admin_check()
+    async def reservation_adjust(self, interaction: discord.Interaction, user: str, old_time: str,
+                                 choice: app_commands.Choice[str], new_value: str, merge: bool = False):
+        """Adjust reservation - nested grouped version"""
+        await self.adjust_time_admin.callback(self, interaction, user, old_time, choice, new_value, merge)
+    
+    # ===== /debug logs group commands =====
+    
+    @logs_group.command(name="level", description="Set global log level")
+    @app_commands.describe(level="CRITICAL|ERROR|WARNING|INFO|DEBUG")
+    @is_developer_check()
+    async def logs_level(self, interaction: discord.Interaction, level: str):
+        """Set log level - nested grouped version"""
+        await self.set_log_level.callback(self, interaction, level)
+    
+    @logs_group.command(name="tail", description="Show recent log lines")
+    @app_commands.describe(lines="Number of lines to show (max 200)")
+    @is_developer_check()
+    async def logs_tail(self, interaction: discord.Interaction, lines: int = 50):
+        """Tail logs - nested grouped version"""
+        await self.tail_logs.callback(self, interaction, lines)
+    
+    @logs_group.command(name="watch", description="Stream logs to this channel (enable/disable)")
+    @app_commands.describe(enable="Enable or disable streaming logs here")
+    @is_developer_check()
+    async def logs_watch(self, interaction: discord.Interaction, enable: bool = True):
+        """Watch logs - nested grouped version"""
+        await self.watch_logs.callback(self, interaction, enable)
+
     # ========== Error Handling ==========
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -1623,4 +1889,9 @@ class AdminPanel(commands.Cog):
 
 async def setup(bot):
     """Setup function for loading the cog"""
-    await bot.add_cog(AdminPanel(bot))
+    cog = AdminPanel(bot)
+    await bot.add_cog(cog)
+    
+    # Register main parent groups
+    bot.tree.add_command(cog.admin_group)
+    bot.tree.add_command(cog.debug_group)
