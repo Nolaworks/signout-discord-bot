@@ -183,6 +183,15 @@ async def notification_preferences(
     user_id = get_user_id(interaction.user)
     username = interaction.user.name
     
+    # Prevent complete disablement - at least one must be enabled
+    if reminders is False and warnings is False and waitlist is False:
+        await interaction.response.send_message(
+            "You must keep at least one notification type enabled. "
+            "Notifications help ensure you don't miss important reservation updates.",
+            ephemeral=True
+        )
+        return
+    
     with get_db_session() as session:
         # Ensure user exists in database
         user_repo = UserRepository(session)
@@ -192,6 +201,19 @@ async def notification_preferences(
             session.flush()
         
         prefs = notification_manager.get_preferences(session, user_id)
+        
+        # Check if update would disable all notifications
+        new_reminder = reminders if reminders is not None else prefs.reminder_enabled
+        new_warning = warnings if warnings is not None else prefs.expiration_warning_enabled
+        new_waitlist = waitlist if waitlist is not None else prefs.waitlist_alerts_enabled
+        
+        if not new_reminder and not new_warning and not new_waitlist:
+            await interaction.response.send_message(
+                "You must keep at least one notification type enabled. "
+                "Notifications help ensure you don't miss important reservation updates.",
+                ephemeral=True
+            )
+            return
         
         # Update preferences if provided
         updates = {}
@@ -209,7 +231,7 @@ async def notification_preferences(
         # Show current settings
         embed = discord.Embed(
             title="Notification Preferences",
-            description="Your current notification settings:",
+            description="Your current notification settings:\n\n**Note:** At least one notification type must remain enabled.",
             color=discord.Color.blue()
         )
         embed.add_field(
