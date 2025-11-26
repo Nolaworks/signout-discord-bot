@@ -30,7 +30,7 @@ from time_utils import (
 )
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
-    user_is_admin, is_admin_check, get_user_id
+    user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id
 )
 from autocomplete import user_autocomplete, reservation_autocomplete
 from validation import validate_max_time_hours
@@ -137,9 +137,9 @@ class AdminPanel(commands.Cog):
 
     # ========== Log Management Commands ==========
 
-    @app_commands.command(name="loglevel", description="Admin: Set global log level")
+    @app_commands.command(name="loglevel", description="[DEV] Set global log level")
     @app_commands.default_permissions(administrator=True)
-    @is_admin_check()
+    @is_developer_check()
     @app_commands.describe(level="CRITICAL|ERROR|WARNING|INFO|DEBUG")
     async def set_log_level(self, interaction: discord.Interaction, level: str):
         """Set the global logging level"""
@@ -165,9 +165,9 @@ class AdminPanel(commands.Cog):
         
         await interaction.response.send_message(f"Log level set to {level}", ephemeral=True)
 
-    @app_commands.command(name="taillogs", description="Admin: Show recent log lines")
+    @app_commands.command(name="taillogs", description="[DEV] Show recent log lines")
     @app_commands.default_permissions(administrator=True)
-    @is_admin_check()
+    @is_developer_check()
     @app_commands.describe(lines="Number of lines to show (max 200)")
     async def tail_logs(self, interaction: discord.Interaction, lines: int = 50):
         """Display recent log entries"""
@@ -187,9 +187,9 @@ class AdminPanel(commands.Cog):
             file = discord.File(data, filename="logs.txt")
             await interaction.response.send_message(content="Recent logs:", file=file, ephemeral=True)
 
-    @app_commands.command(name="watchlogs", description="Admin: Stream logs to this channel (enable/disable)")
+    @app_commands.command(name="watchlogs", description="[DEV] Stream logs to this channel (enable/disable)")
     @app_commands.default_permissions(administrator=True)
-    @is_admin_check()
+    @is_developer_check()
     @app_commands.describe(enable="Enable or disable streaming logs here")
     async def watch_logs(self, interaction: discord.Interaction, enable: bool = True):
         """Enable or disable log streaming to current channel"""

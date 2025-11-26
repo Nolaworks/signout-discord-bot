@@ -92,6 +92,32 @@ def is_admin_check():
     return app_commands.check(predicate)
 
 
+def user_is_developer(user) -> bool:
+    """
+    Check if user has developer permissions.
+    
+    Args:
+        user: Discord user/member object
+    
+    Returns:
+        True if user has a developer role, False otherwise
+    """
+    config = get_config()
+    return any(role.name in config.developer_roles for role in getattr(user, "roles", []))
+
+
+def is_developer_check():
+    """
+    Decorator to check if user is a developer.
+    
+    Returns:
+        app_commands.check decorator
+    """
+    async def predicate(interaction: discord.Interaction) -> bool:
+        return user_is_developer(interaction.user)
+    return app_commands.check(predicate)
+
+
 async def get_photo_url(attachment: Optional[discord.Attachment]) -> Optional[str]:
     """
     Get URL from photo attachment if valid.

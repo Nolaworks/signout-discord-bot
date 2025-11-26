@@ -498,13 +498,13 @@ async def admin_summary(interaction: discord.Interaction):
     await interaction.followup.send(summary_text, ephemeral=True)
 
 
-@bot.tree.command(name="testnotify", description="[ADMIN] Test notification system with current reservations")
+@bot.tree.command(name="testnotify", description="[DEV] Test notification system with current reservations")
 @app_commands.default_permissions(administrator=True)
 async def test_notify(interaction: discord.Interaction):
-    """Manually trigger notification checks (admin only)"""
-    if not user_is_admin(interaction.user):
+    """Manually trigger notification checks (developer only)"""
+    if not user_is_developer(interaction.user):
         await interaction.response.send_message(
-            "This command is restricted to administrators.",
+            "This command is restricted to developers.",
             ephemeral=True
         )
         return

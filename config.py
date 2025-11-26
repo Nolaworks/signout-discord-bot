@@ -31,6 +31,9 @@ class BotConfig:
 
     # Admin roles
     admin_roles: Set[str] = None
+    
+    # Developer roles (for debug/test commands)
+    developer_roles: Set[str] = None
 
     # Tool settings
     default_max_time_hours: int = 168  # 1 week
@@ -53,6 +56,8 @@ class BotConfig:
     def __post_init__(self):
         if self.admin_roles is None:
             self.admin_roles = {"Admin", "Moderator", "Board Member"}
+        if self.developer_roles is None:
+            self.developer_roles = {"Developer"}
 
 
 def load_config() -> BotConfig:
