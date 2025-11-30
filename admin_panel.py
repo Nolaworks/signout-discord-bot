@@ -300,11 +300,11 @@ class AdminPanel(commands.Cog):
                 tool_repo.set_role(tool, str(role.id), True)
                 session.commit()
                 
-                tool_room_note = "\n🏠 Tool Room detected - photo requirements will apply." if is_tool_room else ""
+                tool_room_note = "\nTool Room detected - photo requirements will apply." if is_tool_room else ""
                 await interaction.followup.send(
-                    f" Tool `{tool}` has been added with max time {max_hours}h.\n\n"
-                    f"🎭 Created role: {role.mention}\n"
-                    f" Role requirement is **enabled** by default.{tool_room_note}",
+                    f"Tool `{tool}` has been added with max time {max_hours}h.\n\n"
+                    f"Created role: {role.mention}\n"
+                    f"Role requirement is **enabled** by default.{tool_room_note}",
                     ephemeral=True
                 )
                 logger.info(f"Admin {interaction.user.name} added tool: {tool} with role {role.id}, is_tool_room={is_tool_room}")
@@ -312,7 +312,7 @@ class AdminPanel(commands.Cog):
                 # Tool created but role creation failed
                 session.commit()
                 await interaction.followup.send(
-                    f"⚠️ Tool `{tool}` added with max time {max_hours}h, but role creation failed.\n\n"
+                    f"Tool `{tool}` added with max time {max_hours}h, but role creation failed.\n\n"
                     f"Use `/syncroles` to create the role later.",
                     ephemeral=True
                 )
@@ -579,7 +579,7 @@ class AdminPanel(commands.Cog):
         if user is not None:
             if not user_is_admin(interaction.user):
                 await interaction.response.send_message(
-                    "🚫 You can only modify your own reservations.",
+                    "You can only modify your own reservations.",
                     ephemeral=True
                 )
                 return
@@ -874,11 +874,11 @@ class AdminPanel(commands.Cog):
             if blocked_tools:
                 parts.append(f"Blocked: {', '.join(blocked_tools)}")
             if skipped_active:
-                parts.append(f"⏭️ Skipped (in use): {', '.join(skipped_active)}")
+                parts.append(f"Skipped (in use): {', '.join(skipped_active)}")
             if skipped_overlap:
-                parts.append(f"⏭️ Skipped (overlaps): {', '.join(skipped_overlap)}")
+                parts.append(f"Skipped (overlaps): {', '.join(skipped_overlap)}")
             if modified:
-                parts.append(f"✂️ Modified: {', '.join(modified)}")
+                parts.append(f"Modified: {', '.join(modified)}")
             
             if not parts:
                 await interaction.followup.send("No tools qualified for blocking.", ephemeral=True)
@@ -991,14 +991,14 @@ class AdminPanel(commands.Cog):
         # Validate inputs
         if max_consecutive < 0:
             await interaction.response.send_message(
-                "❌ Maximum consecutive signouts must be 0 or greater (0 = no limit).",
+                "Maximum consecutive signouts must be 0 or greater (0 = no limit).",
                 ephemeral=True
             )
             return
         
         if cooldown_hours < 1:
             await interaction.response.send_message(
-                "❌ Cooldown must be at least 1 hour.",
+                "Cooldown must be at least 1 hour.",
                 ephemeral=True
             )
             return
@@ -1057,14 +1057,14 @@ class AdminPanel(commands.Cog):
                 return
             
             embed = discord.Embed(
-                title="🔄 Consecutive Re-Signout Limits",
+                title="Consecutive Re-Signout Limits",
                 description="Tools with consecutive signout restrictions:",
                 color=discord.Color.orange()
             )
             
             for limit in limits:
                 embed.add_field(
-                    name=f"🛠️ {limit.tool_name}",
+                    name=f"{limit.tool_name}",
                     value=(
                         f"**Max consecutive:** {limit.max_consecutive_signouts}\n"
                         f"**Cooldown:** {limit.cooldown_hours} hours\n"
@@ -1124,7 +1124,7 @@ class AdminPanel(commands.Cog):
                 return
             
             embed = discord.Embed(
-                title=f"🔄 Re-Signout Status: {tool_name}",
+                title=f"Re-Signout Status: {tool_name}",
                 description=f"Limit: {limit.max_consecutive_signouts} consecutive | Cooldown: {limit.cooldown_hours}h",
                 color=discord.Color.blue()
             )
@@ -1148,14 +1148,14 @@ class AdminPanel(commands.Cog):
             
             if active_cooldowns:
                 embed.add_field(
-                    name="⏳ In Cooldown",
+                    name="In Cooldown",
                     value="\n".join(active_cooldowns[:10]),
                     inline=False
                 )
             
             if approaching_limit:
                 embed.add_field(
-                    name="📊 Consecutive Signouts",
+                    name="Consecutive Signouts",
                     value="\n".join(approaching_limit[:10]),
                     inline=False
                 )
@@ -1369,7 +1369,7 @@ class AdminPanel(commands.Cog):
                 return
             
             embed = discord.Embed(
-                title=f"🔓 Exemptions: {tool_name}",
+                title=f"Exemptions: {tool_name}",
                 description=f"Users exempt from consecutive signout limits:",
                 color=discord.Color.green()
             )
@@ -1448,10 +1448,10 @@ class AdminPanel(commands.Cog):
                 session.commit()
                 
                 status = "**enabled**" if new_state else "**disabled**"
-                emoji = "" if new_state else "⚠️"
+                
                 
                 await interaction.followup.send(
-                    f"{emoji} Role requirement {status} for **{tool_name}**.\n\n"
+                    f"Role requirement {status} for **{tool_name}**.\n\n"
                     f"Role: <@&{tool.role_id}>\n"
                     f"Status: {'Users need this role to sign out' if new_state else 'Role check disabled'}",
                     ephemeral=True
@@ -1479,7 +1479,7 @@ class AdminPanel(commands.Cog):
             
             if not tool or not tool.role_id:
                 await interaction.followup.send(
-                    f"❌ **{tool_name}** doesn't have a role configured.\n\n"
+                    f"**{tool_name}** doesn't have a role configured.\n\n"
                     f"Use `/togglerole` first to create and enable the role.",
                     ephemeral=True
                 )
@@ -1490,7 +1490,7 @@ class AdminPanel(commands.Cog):
             
             if not role:
                 await interaction.followup.send(
-                    f"❌ Role not found. It may have been deleted.\n\n"
+                    f"Role not found. It may have been deleted.\n\n"
                     f"Use `/togglerole` to recreate it.",
                     ephemeral=True
                 )
@@ -1499,7 +1499,7 @@ class AdminPanel(commands.Cog):
             # Check if user already has the role
             if role in user.roles:
                 await interaction.followup.send(
-                    f"ℹ️ {user.mention} already has the {role.mention} role.",
+                    f"{user.mention} already has the {role.mention} role.",
                     ephemeral=True
                 )
                 return
@@ -1516,14 +1516,14 @@ class AdminPanel(commands.Cog):
                 logger.info(f"{interaction.user.name} assigned {role.name} to {user.name} for {tool_name}")
             except discord.Forbidden:
                 await interaction.followup.send(
-                    f"❌ I don't have permission to assign roles.\n\n"
+                    f"I don't have permission to assign roles.\n\n"
                     f"Check my role hierarchy and permissions.",
                     ephemeral=True
                 )
             except Exception as e:
                 logger.error(f"Error assigning role: {e}")
                 await interaction.followup.send(
-                    f"❌ Failed to assign role: {str(e)}",
+                    f"Failed to assign role: {str(e)}",
                     ephemeral=True
                 )
 
