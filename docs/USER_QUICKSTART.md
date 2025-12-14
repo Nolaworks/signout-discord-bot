@@ -1,4 +1,4 @@
-# Tool Bot Updates Guide
+# Tool Bot Updates Guide \- Starting 12/16\!
 
 This bot helps you reserve tools in the makerspace. Here's everything you need to know.
 
@@ -10,19 +10,20 @@ If you used the old signout bot, here are the major improvements:
 
 ### **New Features Overview**
 
-- **Tool Room Control** \- There is a new channel category called “Tool Room,” All signout channels under that category require a tool  
+- **Tool Room Control** \- There is a new channel category called "Tool Room," All signout channels under that category require a photo to start and end a reservation. More info below\!  
+- **Role-Based Tool Access** \- Most tools now require you to have the corresponding role before you can sign them out. This ensures you've been trained on the tool before using it. Contact a shop leader to get trained and receive access.
 - **Waitlist System** \- Join a waitlist and get notified when tools become available  
-- **Smart Notifications** \- Get reminders before your reservation starts and ends  
+- **Smart Notifications** \- Get reminders before your reservation starts and ends.  
 - **My Reservations** \- View all your active reservations across all tools with `/myreservations`  
 - **Consecutive Signout Limits** \- Fair access to high-demand tools (prevents monopolization)  
 - **Statistics** \- See your usage history with `/mystats`  
-- **`New adjusttime command`** \- It now allows you to update a portion of your reservation instead of essentially having to create a whole new signout. See below for an example. 
+- **`New adjusttime command`** \- It now allows you to update a portion of your reservation instead of essentially having to create a whole new signout. See below for an example.
 
 ### **Changed Commands**
 
 - **`/adjusttime` is now actually useful**\!  
-  - **Old:** `/adjusttime reservation:<select from dropdown> new_time:<text>`   
-  - **New:** `/adjusttime old_time:<choose from list> choice:<start|end|range> new_value:<text>`   
+  - **Old:** `/adjusttime reservation:<select from dropdown> new_time:<text>`  
+  - **New:** `/adjusttime old_time:<choose from list> choice:<start|end|range> new_value:<text>`  
   - Can still cancel by typing "cancel" as the new time
 
 ---
@@ -58,27 +59,29 @@ Type `/signout` in the tool's signout channel and enter your time:
 ### When Signing Out
 
 **If your reservation starts within 30 minutes:**
-- You must attach a photo immediately using the `photo:` parameter
+
+- You must attach a photo immediately using the `photo:` parameter  
 - Example: `/signout time: now for 2 hours photo: [attach image]`
 
 **If your reservation starts more than 30 minutes away:**
-- You can sign out without a photo
-- Send the photo to the bot via DM anytime before your reservation starts
-- You'll get a reminder 15 minutes before start time
+
+- You can sign out without a photo  
+- Send the photo to the bot via DM anytime before your reservation starts  
+- You'll get a reminder 15 minutes before start time  
 - **Deadline: 10 minutes after your start time** or the reservation will be cancelled
 
 ### When Returning
 
-- Use `/returntool` and select your reservation
-- Attach a photo showing the tool/workspace in the returned condition
-- If you forget, you have **30 minutes** to send a photo via DM to the bot
+- Use `/returntool` and select your reservation  
+- Attach a photo showing the tool/workspace in the returned condition  
+- If you forget, you have **30 minutes** to send a photo via DM to the bot  
 - After 30 minutes, you'll get a "photo debt" that blocks future Tool Room signouts
 
 ### Sending Photos via DM
 
-1. Open a direct message with the bot
-2. Simply send the photo (no command needed)
-3. The bot will ask which reservation the photo is for
+1. Open a direct message with the bot  
+2. Simply send the photo (no command needed)  
+3. The bot will ask which reservation the photo is for  
 4. Reply with the number shown in the list
 
 **Photo debts:** If you have an outstanding photo debt, you cannot sign out any Tool Room tools until an administrator clears it. Contact an admin with the missing photo to resolve the debt.
@@ -125,7 +128,7 @@ Select the reservation you want to cancel.
 
 The bot can send you reminders:
 
-- **15 minutes before** your reservation starts  
+- **APPROX 15 minutes before** your reservation starts  
 - **15 minutes before** your reservation ends  
 - **When a waitlisted tool** becomes available
 
@@ -135,6 +138,7 @@ Set your preferences with `/notifyprefs`.
 
 ## Tips
 
+- **Get trained first** \- Most tools require you to have the tool's role before signing out. Contact a shop leader for training.
 - **Be specific with times** \- "2pm to 4pm" works better than "a couple hours"  
 - **Return tools promptly** \- Others may be waiting\!  
 - **Use the waitlist** \- Get notified instead of checking repeatedly  
@@ -186,6 +190,7 @@ Some high-demand tools limit how many times you can sign out consecutively:
 ## Need Help?
 
 - Type `/help` for the full command list  
-- Contact an administrator if you have access issues  
+- **Need tool access?** Contact a shop leader to get trained and receive the tool role
+- Contact a shop leader if you have other access issues  
 - See `/mystats` to check your usage history  
 - Check channel descriptions for tool-specific rules
