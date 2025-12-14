@@ -2,266 +2,334 @@
 
 A Discord bot for managing tool reservations through dedicated signout channels. Users can reserve tools using natural language time inputs, and the system tracks all reservations in a PostgreSQL database.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [User Guide](#user-guide)
+- [Administrator Guide](#administrator-guide)
+- [Installation & Deployment](#installation--deployment)
+- [Configuration](#configuration)
+
+---
+
 ## Overview
 
-The bot enables members to reserve tools via slash commands in dedicated signout channels. It uses OpenAI's API to parse natural language time inputs like "now to 5pm" or "tomorrow 2pm-4pm" into exact time ranges. All commands are slash commands, making them easy to discover and use on mobile devices.
+The bot enables members to reserve tools via slash commands in dedicated signout channels. It uses OpenAI's API to parse natural language time inputs like "now to 5pm" or "tomorrow 2pm-4pm" into exact time ranges.
 
-## Key Features
+### Key Features
 
-- **Natural Language Time Parsing**: Type times naturally like "tomorrow afternoon" or "Friday 2-4pm"
-- **Conflict Prevention**: Automatically detects and prevents overlapping reservations
-- **Photo Requirements**: Tool room channels require photos for accountability
-- **Role-Based Access**: Control which members can reserve specific tools
-- **Re-Signout Limits**: Prevent tool monopolization with configurable cooldown periods
-- **Admin Blocks**: Block tools for maintenance or events
-- **Automatic Notifications**: Get reminders before reservations start and end
-- **Waitlist System**: Join waitlists to be notified when tools become available
-- **Complete History**: All reservations tracked in database for reporting and auditing
+- **Natural Language Time Parsing** - Type times naturally like "tomorrow afternoon" or "Friday 2-4pm"
+- **Conflict Prevention** - Automatically detects and prevents overlapping reservations
+- **Photo Requirements** - Tool room channels require photos for accountability
+- **Role-Based Access** - Control which members can reserve specific tools
+- **Re-Signout Limits** - Prevent tool monopolization with configurable cooldown periods
+- **Admin Blocks** - Block tools for maintenance or events
+- **Automatic Notifications** - Get reminders before reservations start and end
+- **Waitlist System** - Join waitlists to be notified when tools become available
+- **Complete History** - All reservations tracked in database for reporting
 
-## User Commands
+---
+
+## User Guide
 
 All commands must be used in the appropriate tool's signout channel.
 
-### Basic Commands
+### Making a Reservation
 
 **`/signout time:<time> [photo:<image>]`**
-Reserve a tool for a specific time period. In tool room channels, you must attach a photo.
-- Examples: "now for 2 hours", "3pm to 5pm", "tomorrow 10am-12pm"
 
-**`/returntool reservation:<pick> [photo:<image>]`**
+Reserve a tool for a specific time period. In tool room channels, a photo is required.
+
+Examples:
+- `/signout time:now for 2 hours`
+- `/signout time:3pm to 5pm`
+- `/signout time:tomorrow 10am-12pm`
+- `/signout time:Friday afternoon`
+
+### Returning a Tool
+
+**`/returntool reservation:<select> [photo:<image>]`**
+
 Mark your reservation as complete. Select from your active reservations. Tool room channels require a return photo.
 
-**`/cancel reservation:<pick>`**
+### Canceling a Reservation
+
+**`/cancel reservation:<select>`**
+
 Cancel a reservation you no longer need. Select from your active reservations.
 
-**`/reservations`**
-View all active reservations for the current tool.
+### Other User Commands
 
-**`/adjusttime`**
-Modify the start time, end time, or both for your existing reservation.
-
-**`/comment comment:<text>`**
-Post a comment about the tool visible to all users.
-
-### Notification Commands
-
-**`/notifyprefs`**
-Configure your notification settings for reservation reminders.
-
-**`/waitlist action:<add|remove>`**
-Join or leave the waitlist for the current tool.
-
-**`/mywaitlist`**
-View all tools you're currently waitlisted for.
-
-**`/help`**
-Display the complete user command reference.
-
-## Admin Commands
-
-Admin commands are organized into groups for easier navigation. All admin commands require Administrator permission in Discord.
-
-### Command Groups
-
-Type `/admin` or `/debug` to see available command groups:
-- **`/admin tool`** - Add, remove, and configure tools
-- **`/admin reservation`** - Manage user reservations
-- **`/admin block`** - Block tools for maintenance
-- **`/admin limit`** - Configure re-signout limits
-- **`/admin exempt`** - Manage limit exemptions
-- **`/admin role`** - Control role-based access
-- **`/debug logs`** - View and configure logging
-
-### Tool Management
-
-**`/admin tool add name:<tool> [max_hours:<int>] [role_required:<bool>]`**
-Add a new tool to the system. Role requirement is enabled by default. Tools added in tool room channels automatically require photos.
-
-**`/admin tool remove name:<tool>`**
-Remove a tool from the system. All associated reservations and settings are deleted.
-
-**`/admin tool maxtime hours:<int>`**
-Set the maximum reservation time for the current tool.
-
-### Reservation Management
-
-**`/admin reservation clear`**
-Clear all reservations for the current tool.
-
-**`/admin reservation forcereturn`**
-Force return the currently active reservation.
-
-**`/admin reservation adjust`**
-Modify another user's reservation time.
-
-### Admin Blocks
-
-**`/admin block add tool:<select> time:<range> [force:<bool>]`**
-Block a tool from being reserved. Select "[All Tools]" to block everything. Use force:true to override existing reservations.
-
-**`/admin block remove block:<select>`**
-Remove an active admin block. Select from the list of current blocks.
-
-**`/admin block list`**
-View all active admin blocks across all tools.
-
-### Re-Signout Limits
-
-**`/admin limit set max:<int> cooldown:<hours>`**
-Configure how many times users can consecutively re-sign out the current tool, and the cooldown period before they can reserve it again.
-
-**`/admin limit view`**
-View re-signout limits configured for all tools.
-
-**`/admin limit check`**
-See which users are currently in cooldown for the current tool.
-
-**`/admin limit clear user:<name>`**
-Reset a user's cooldown counter for the current tool.
-
-### Exemptions
-
-**`/admin exempt add user:<name> [expires:<date>]`**
-Exempt a user from re-signout limits for the current tool. Optionally set an expiration date.
-
-**`/admin exempt remove user:<name>`**
-Remove a user's exemption for the current tool.
-
-**`/admin exempt list`**
-View all exemptions configured for the current tool.
-
-### Role Management
-
-**`/admin role toggle`**
-Enable or disable role requirement for the current tool.
-
-**`/admin role assign user:<name>`**
-Give a user access to sign out the current tool.
-
-**`/admin role revoke user:<name>`**
-Remove a user's access to sign out the current tool.
-
-**`/admin role sync`**
-Create Discord roles for all tools and synchronize permissions.
+| Command | Description |
+|---------|-------------|
+| `/reservations` | View all active reservations for the current tool |
+| `/adjusttime` | Modify the start or end time of your reservation |
+| `/comment comment:<text>` | Post a comment about the tool |
+| `/notifyprefs` | Configure notification settings |
+| `/waitlist action:<add\|remove>` | Join or leave the waitlist |
+| `/mywaitlist` | View tools you're waitlisted for |
+| `/help` | Display user command reference |
 
 ### Notifications
 
-**`/testnotify`**
-Test the notification system by sending yourself a test notification.
-
-**`/adminsummary`**
-Manually send the daily reservation summary to all administrators.
-
-### Logging
-
-**`/debug logs level level:<DEBUG|INFO|WARNING|ERROR>`**
-Change the bot's logging level.
-
-**`/debug logs tail [lines:<int>]`**
-View recent log entries.
-
-**`/debug logs watch enable:<bool>`**
-Enable or disable live log streaming to the current channel.
-
-**`/adminhelp`**
-Display the complete admin command reference.
-
-## How to Use
-
-### For Regular Users
-
-1. Navigate to the signout channel for the tool you want to reserve (e.g., #signout-laser-cutter)
-2. Type `/signout` and enter your desired time
-3. In tool room channels, attach a photo of the tool
-4. When finished, use `/returntool` to mark it as returned
-5. Use `/cancel` if you need to cancel your reservation early
-
-### For Administrators
-
-1. Use `/admin tool add` to create new tools
-2. Configure role requirements with `/admin role toggle`
-3. Set re-signout limits with `/admin limit set` to prevent monopolization
-4. Use `/admin block add` to block tools for maintenance or events
-5. Grant access to individual users with `/admin role assign`
-
-## Photo Requirements
-
-Tool room channels automatically require photos for signouts and returns. This ensures accountability and provides visual documentation of tool condition. Regular channels make photos optional but recommended.
-
-## Role-Based Access
-
-Each tool can have a dedicated Discord role for access control. By default, role requirements are enabled for new tools to provide secure access control. Administrators automatically bypass role requirements.
-
-To manage tool access:
-1. Use `/admin role sync` to create roles for all tools
-2. Enable role requirement with `/admin role toggle` (if not already enabled)
-3. Assign users with `/admin role assign user:@Member`
-4. Revoke access with `/admin role revoke user:@Member`
-
-## Re-Signout Limits
-
-Prevent users from monopolizing tools by setting consecutive re-signout limits. When a user reaches their limit, they must wait through a cooldown period before reserving that tool again.
-
-Example: Set limit to 3 re-signouts with 24-hour cooldown
-- User reserves tool 4 times in a row
-- After 4th return, they cannot reserve again for 24 hours
-- Other users can reserve during this cooldown
-- Admins are automatically exempt from all limits
-
-## Notifications
-
 The bot sends automatic notifications:
-- 15 minutes before reservation starts
-- 15 minutes before reservation ends
-- When waitlisted tool becomes available
+- 15 minutes before your reservation starts
+- 15 minutes before your reservation ends
+- When a waitlisted tool becomes available
 
-Users can configure their notification preferences with `/notifyprefs`.
+Configure preferences with `/notifyprefs`.
 
-## Getting Help
+---
 
-- Type `/help` for user command reference
-- Type `/adminhelp` for admin command reference
-- Contact an administrator for access issues or questions
+## Administrator Guide
 
-## Getting Help
+Admin commands require Administrator permission in Discord.
 
-- Type `/help` for user command reference
-- Type `/adminhelp` for admin command reference
-- Contact an administrator for access issues or questions
+### Command Groups
 
-## Technical Details
+| Group | Description |
+|-------|-------------|
+| `/admin tool` | Add, remove, and configure tools |
+| `/admin reservation` | Manage user reservations |
+| `/admin block` | Block tools for maintenance |
+| `/admin limit` | Configure re-signout limits |
+| `/admin exempt` | Manage limit exemptions |
+| `/admin role` | Control role-based access |
+| `/debug logs` | View and configure logging |
+
+### Tool Management
+
+```
+/admin tool add name:<tool> [max_hours:<int>] [role_required:<bool>]
+```
+Add a new tool. Role requirement enabled by default.
+
+```
+/admin tool remove name:<tool>
+```
+Remove a tool and all associated data.
+
+```
+/admin tool maxtime hours:<int>
+```
+Set maximum reservation time for the current tool.
+
+### Reservation Management
+
+| Command | Description |
+|---------|-------------|
+| `/admin reservation clear` | Clear all reservations for current tool |
+| `/admin reservation forcereturn` | Force return active reservation |
+| `/admin reservation adjust` | Modify another user's reservation |
+
+### Admin Blocks
+
+```
+/admin block add tool:<select> time:<range> [force:<bool>]
+```
+Block a tool from reservations. Select "[All Tools]" to block everything. Use `force:true` to override existing reservations.
+
+```
+/admin block remove block:<select>
+```
+Remove an active admin block.
+
+```
+/admin block list
+```
+View all active blocks.
+
+### Re-Signout Limits
+
+Prevent tool monopolization by limiting consecutive reservations.
+
+```
+/admin limit set max:<int> cooldown:<hours> [reset_after:<hours>] [min_total:<hours>]
+```
+- `max` - Maximum consecutive signouts before cooldown
+- `cooldown` - Hours user must wait before reserving again
+- `reset_after` - Hours of inactivity before counter resets (default: 24)
+- `min_total` - Minimum accumulated hours before reset applies (default: 48)
+
+| Command | Description |
+|---------|-------------|
+| `/admin limit view` | View all tool limits |
+| `/admin limit check` | See users in cooldown |
+| `/admin limit clear user:<name>` | Reset user's cooldown |
+
+### Exemptions
+
+| Command | Description |
+|---------|-------------|
+| `/admin exempt add user:<name> [expires:<date>]` | Exempt user from limits |
+| `/admin exempt remove user:<name>` | Remove exemption |
+| `/admin exempt list` | View all exemptions |
+
+### Role Management
+
+Control access to tools with Discord roles.
+
+| Command | Description |
+|---------|-------------|
+| `/admin role toggle` | Enable/disable role requirement |
+| `/admin role assign user:<name>` | Grant tool access |
+| `/admin role revoke user:<name>` | Remove tool access |
+| `/admin role sync` | Create roles for all tools |
+
+### Logging & Debugging
+
+| Command | Description |
+|---------|-------------|
+| `/debug logs level level:<level>` | Set logging level |
+| `/debug logs tail [lines:<int>]` | View recent logs |
+| `/debug logs watch enable:<bool>` | Stream logs to channel |
+| `/testnotify` | Test notification system |
+| `/adminsummary` | Send reservation summary |
+| `/adminhelp` | Admin command reference |
+
+---
+
+## Installation & Deployment
 
 ### Requirements
+
 - Python 3.12+
-- PostgreSQL database
+- PostgreSQL 14+
 - Discord bot token
 - OpenAI API key
 
-### Installation
+### Quick Start
 
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Configure environment variables in `.env` file
-4. Run database migrations if needed
-5. Start the bot: `python mainbot.py`
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Nolaworks/signout-discord-bot.git
+   cd signout-discord-bot
+   ```
 
-### Environment Configuration
+2. **Create virtual environment**
+   ```bash
+   python3 -m venv .bot-venv
+   source .bot-venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-Required environment variables:
-- `TEST_DISCORD_TOKEN` or `DISCORD_TOKEN` - Discord bot token
-- `OPENAI_API_KEY` - OpenAI API key for natural language parsing
-- `DATABASE_URL` - PostgreSQL connection string
+3. **Configure environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your credentials
+   ```
 
-Optional environment variables:
-- `TIMEZONE` - Default: "America/Chicago"
-- `DEFAULT_MAX_TIME_HOURS` - Default: 168 (1 week)
-- `CLEANUP_INTERVAL_MINUTES` - Default: 1
+4. **Initialize database**
+   ```bash
+   python3 helper_scripts/migrate_to_db.py
+   ```
 
-See `config.py` for complete configuration options.
+5. **Start the bot**
+   ```bash
+   python3 mainbot.py
+   ```
+
+### Migrating from JSON/CSV System
+
+If you have existing data from a previous JSON/CSV-based system:
+
+1. **Copy your data files**
+   ```bash
+   mkdir -p archive
+   cp /path/to/old/tools.json archive/
+   cp /path/to/old/history.csv archive/
+   ```
+
+2. **Run migration**
+   ```bash
+   # Fresh migration (clears database first)
+   python3 helper_scripts/migrate_to_db.py --reset --path archive/
+   
+   # Add to existing data
+   python3 helper_scripts/migrate_to_db.py --path archive/
+   ```
+
+3. **Sync statistics**
+   ```bash
+   python3 scripts/sync_user_statistics.py --apply
+   ```
+
+#### Migration Options
+
+| Option | Description |
+|--------|-------------|
+| `--path <dir>` | Directory containing tools.json and history.csv |
+| `--archive` | Use archive/ directory (auto-detected if exists) |
+| `--reset` | Clear all database tables before migration |
+| `--help` | Show help message |
+
+#### User ID Mapping
+
+Migrated users receive temporary IDs (`migrated_username`). When a user makes their first reservation after migration, their account is automatically linked to their real Discord ID, preserving all historical data.
+
+### Systemd Service
+
+For production deployment, use systemd:
+
+```bash
+# Copy service file
+sudo cp systemd/signout.service /etc/systemd/system/
+
+# Enable and start
+sudo systemctl enable signout.service
+sudo systemctl start signout.service
+
+# View logs
+sudo journalctl -u signout.service -f
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file with:
+
+```env
+# Required
+DISCORD_TOKEN=your_discord_bot_token
+OPENAI_API_KEY=your_openai_api_key
+DATABASE_URL=DATABASE_URL_REDACTEDhost:5432/signout_bot
+
+# Optional
+TIMEZONE=America/Chicago
+DEFAULT_MAX_TIME_HOURS=168
+CLEANUP_INTERVAL_MINUTES=1
+LOG_LEVEL=INFO
+```
+
+### Database Setup
+
+Create a PostgreSQL database:
+
+```sql
+CREATE DATABASE signout_bot;
+CREATE USER botuser WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE signout_bot TO botuser;
+```
+
+The bot automatically creates all required tables on first run.
+
+---
 
 ## Additional Documentation
 
-For administrators and developers, additional documentation is available in the repository:
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production deployment guide
-- **[REFACTORING.md](REFACTORING.md)** - Codebase structure and design
-- **[helper_scripts/helper_README.md](helper_scripts/helper_README.md)** - Database migration scripts
+| Document | Description |
+|----------|-------------|
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Production deployment guide |
+| [helper_scripts/helper_README.md](helper_scripts/helper_README.md) | Migration and maintenance scripts |
+| [docs/](docs/) | Additional technical documentation |
+
+---
+
+## Support
+
+- Type `/help` for user commands
+- Type `/adminhelp` for admin commands
+- Contact an administrator for access issues

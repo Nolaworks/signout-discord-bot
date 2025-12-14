@@ -1,198 +1,180 @@
 # Helper Scripts
 
-This directory contains utility scripts for database management, migration, and maintenance.
+Utility scripts for database management, migration, and maintenance.
 
-## Migration Scripts
+## Main Migration Script
 
 ### `migrate_to_db.py`
-**Purpose:** Migrate data from JSON/CSV files to PostgreSQL database
+
+Migrate data from JSON/CSV files to PostgreSQL database.
 
 **Usage:**
 ```bash
+python3 helper_scripts/migrate_to_db.py [options]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--path <dir>` | Use specified directory for source files |
+| `--archive` | Use archive/ directory (auto-detected if exists) |
+| `--reset` | Clear all database tables before migration |
+| `--help` | Show help message |
+
+**Examples:**
+
+```bash
+# Fresh migration from archive directory
+python3 helper_scripts/migrate_to_db.py --reset --path archive/
+
+# Add to existing data
+python3 helper_scripts/migrate_to_db.py --path archive/
+
+# Auto-detect archive directory
 python3 helper_scripts/migrate_to_db.py
 ```
 
-**When to use:**
-- Initial setup of database from existing JSON data
-- Migrating from file-based storage to database
-- Production deployment migration
-
 **What it does:**
-- Creates all database tables (including new consecutive signout tables)
-- Migrates tools from `tools.json`
-- Migrates active reservations
-- Migrates historical data from `history.csv`
-- Verifies new tables were created
+1. Initializes database schema (creates all tables)
+2. Optionally resets database if `--reset` flag used
+3. Migrates tools from `tools.json`
+4. Migrates active reservations
+5. Migrates historical data from `history.csv`
+6. Syncs user and tool statistics
+
+**Source files expected:**
+- `tools.json` - Tool definitions and active reservations
+- `history.csv` - Historical reservation records
 
 ---
 
-### `migrate_consecutive_signouts.py`
-**Purpose:** Add consecutive signout tracking tables to existing database
+## Statistics Sync
+
+### `../scripts/sync_user_statistics.py`
+
+Recalculate and sync statistics from history data.
 
 **Usage:**
 ```bash
-python3 helper_scripts/migrate_consecutive_signouts.py
+# Dry run (shows what would change)
+python3 scripts/sync_user_statistics.py
+
+# Apply changes
+python3 scripts/sync_user_statistics.py --apply
 ```
 
-**When to use:**
-- Adding consecutive signout features to existing database
-- Upgrading from older version without these tables
-
-**What it creates:**
-- `tool_signout_limits` - Per-tool limit configuration
-- `consecutive_signout_tracker` - User signout tracking
-- `consecutive_signout_exemptions` - Admin exemptions
+**What it syncs:**
+- User statistics (total reservations, hours, most-used tool)
+- Tool statistics (total reservations, hours, most frequent user)
+- Updates both statistics tables and main user/tool tables
 
 ---
 
-### `fix_consecutive_tables.py`
-**Purpose:** Fix foreign key relationships in consecutive signout tables
-
-**Usage:**
-```bash
-python3 helper_scripts/fix_consecutive_tables.py
-```
-
-**When to use:**
-- If you get foreign key errors related to consecutive signout tables
-- After manually creating tables without proper foreign keys
-
-**What it does:**
-- Drops existing consecutive signout tables
-- Recreates them with correct foreign key constraints
-
----
-
-### `migrate_role_permissions.py`
-**Purpose:** Add role-based permission columns to tools table
-
-**Usage:**
-```bash
-python3 helper_scripts/migrate_role_permissions.py
-```
-
-**When to use:**
-- Adding role-based permissions to existing database
-- Upgrading to version with tool access control
-
-**What it adds:**
-- `role_id` column - Stores Discord role ID for tool
-- `role_required` column - Whether role is needed to sign out
-
-**After migration:**
-- Run `/syncroles` in Discord to create roles for existing tools
-- See `ROLE_BASED_PERMISSIONS.md` for full documentation
-
----
-
-## Database Management
-
-### `reset_db.py`
-**Purpose:** Reset the database (DANGER: Deletes all data!)
-
-**Usage:**
-```bash
-python3 helper_scripts/reset_db.py
-```
-
-**⚠️ WARNING:** This will delete ALL data in the database!
-
-**When to use:**
-- Development/testing only
-- Starting fresh with clean database
-- Never use in production without backup
-
-**What it does:**
-- Drops all tables
-- Recreates empty tables
-- Resets database to initial state
-
----
+## Database Backup
 
 ### `backup_db.sh`
-**Purpose:** Create backup of PostgreSQL database
+
+Create backup of PostgreSQL database.
 
 **Usage:**
 ```bash
 ./helper_scripts/backup_db.sh
 ```
 
-**When to use:**
-- Before any migration
-- Regular scheduled backups
-- Before major updates
-
 **What it creates:**
-- Timestamped SQL dump file
-- Stored in project root
+- Timestamped SQL dump file in project root
+- Format: `backup_YYYYMMDD_HHMMSS.sql`
 
 ---
 
-## Execution Order for Fresh Setup
+## Quick Reference
 
-1. **Backup existing data** (if any)
-   ```bash
-   ./helper_scripts/backup_db.sh
-   ```
+### Fresh Installation
 
-2. **Run migration**
-   ```bash
-   python3 helper_scripts/migrate_to_db.py
-   ```
-
-3. **Verify migration**
-   - Check bot logs
-   - Test commands
-   - Verify data
-
-## Execution Order for Updating Existing Database
-
-1. **Backup database**
-   ```bash
-   ./helper_scripts/backup_db.sh
-   ```
-
-2. **Add new tables**
-   ```bash
-   python3 helper_scripts/migrate_consecutive_signouts.py
-   ```
-
-3. **If foreign key errors occur**
-   ```bash
-   python3 helper_scripts/fix_consecutive_tables.py
-   ```
-
-## Development Only
-
-### Reset Database (Development)
 ```bash
-python3 helper_scripts/reset_db.py
+# 1. Setup environment
+python3 -m venv .bot-venv
+source .bot-venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Configure
+cp .env.example .env
+# Edit .env with credentials
+
+# 3. Initialize database
 python3 helper_scripts/migrate_to_db.py
+
+# 4. Start bot
+python3 mainbot.py
 ```
 
-## Notes
+### Migrating from Production JSON/CSV
 
-- All scripts should be run from the project root directory
-- Activate virtual environment before running: `source .bot-venv/bin/activate`
-- Always backup before running any migration or reset script
-- Scripts are idempotent where possible (safe to run multiple times)
+```bash
+# 1. Copy production data
+mkdir -p archive
+scp production:/path/to/tools.json archive/
+scp production:/path/to/history.csv archive/
+
+# 2. Backup existing database (if any)
+./helper_scripts/backup_db.sh
+
+# 3. Run migration with reset
+python3 helper_scripts/migrate_to_db.py --reset --path archive/
+
+# 4. Sync statistics
+python3 scripts/sync_user_statistics.py --apply
+
+# 5. Start bot
+python3 mainbot.py
+```
+
+### Adding Data to Existing Database
+
+```bash
+# 1. Backup first
+./helper_scripts/backup_db.sh
+
+# 2. Run migration (no reset)
+python3 helper_scripts/migrate_to_db.py --path /path/to/data/
+
+# 3. Sync statistics
+python3 scripts/sync_user_statistics.py --apply
+```
+
+---
 
 ## Troubleshooting
 
 **ImportError when running scripts:**
 ```bash
-# Make sure you're in the project root and venv is activated
-cd /root/signout-discord-bot
+# Run from project root with venv activated
+cd /opt/signout/signout-discord-bot
 source .bot-venv/bin/activate
-python3 helper_scripts/script_name.py
+python3 helper_scripts/migrate_to_db.py
 ```
 
-**Permission denied on backup_db.sh:**
+**Permission denied on shell scripts:**
 ```bash
 chmod +x helper_scripts/backup_db.sh
 ```
 
 **Database connection errors:**
-- Check `.env` file has correct `DATABASE_URL`
+- Check `.env` has correct `DATABASE_URL`
 - Verify PostgreSQL is running
-- Check credentials
+- Verify credentials are correct
+
+**Duplicate key errors during migration:**
+- Use `--reset` flag for fresh migration
+- Or manually clear conflicting records
+
+---
+
+## Notes
+
+- Always backup before running migrations
+- Scripts should be run from project root directory
+- Activate virtual environment before running
+- Migration is idempotent for tools (updates existing)
+- User merging happens automatically on first bot use
