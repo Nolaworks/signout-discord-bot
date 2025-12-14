@@ -484,8 +484,8 @@ class NotificationManager:
                 reservation.photo_warning_sent_at = datetime.utcnow()
                 warnings_sent += 1
             
-            # If past grace period (10 min), cancel reservation
-            elif time_since_start >= 10:
+            # If past grace period (10 min), cancel reservation (only if not already being cancelled)
+            elif time_since_start >= 10 and reservation.status == ReservationStatusEnum.ACTIVE:
                 await self._cancel_for_missing_photo(session, reservation, photo_debt_repo, history_repo)
                 cancellations += 1
         
@@ -537,8 +537,11 @@ class NotificationManager:
             # Archive to history
             history_repo.archive_reservation(reservation)
             
-            # Create photo debt (30 min grace period from now)
-            debt_due = get_now(CENTRAL_TZ) + timedelta(minutes=30)
+            # Delete from active reservations
+            session.delete(reservation)
+            
+            # Create photo debt - immediate blocking (no grace period for start photos)
+            debt_due = get_now(CENTRAL_TZ)  # Due immediately
             photo_debt_repo.create_debt(
                 user_id=reservation.user_id,
                 username=reservation.username,
@@ -552,18 +555,18 @@ class NotificationManager:
             # Notify user
             user = await self.bot.fetch_user(int(reservation.user_id))
             embed = discord.Embed(
-                title="Reservation Cancelled - Missing Photo",
+                title="Reservation Cancelled - Photo Not Provided",
                 description=(
                     f"Your reservation for **{reservation.tool_name}** has been cancelled "
-                    f"because the required photo was not provided.\n\n"
-                    f"**You have 30 minutes to send the photo via DM, or you will be blocked "
-                    f"from all Tool Room signouts.**\n\n"
-                    f"Reply to this message with a photo to avoid being blocked."
+                    f"because you did not provide the required photo within the grace period.\n\n"
+                    f"**You are now blocked from signing out any Tool Room tools** until an admin "
+                    f"clears this photo debt.\n\n"
+                    f"Please contact a shop leader to resolve this issue."
                 ),
                 color=discord.Color.dark_red()
             )
             embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-            embed.set_footer(text="Contact an admin if you need assistance")
+            embed.set_footer(text="Shop leaders can clear photo debts with /clearphotodebt")
             
             await user.send(embed=embed)
             

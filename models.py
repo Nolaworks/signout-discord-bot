@@ -10,11 +10,11 @@ from enum import Enum
 
 class ReservationStatus(Enum):
     """Status of a reservation"""
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    RETURNED = "returned"
-    CANCELLED = "cancelled"
-    ADMIN_BLOCK = "admin_block"
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    RETURNED = "RETURNED"
+    CANCELLED = "CANCELLED"
+    ADMIN_BLOCK = "ADMIN_BLOCK"
 
 
 @dataclass

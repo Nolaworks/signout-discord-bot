@@ -17,11 +17,11 @@ Base = declarative_base()
 
 class ReservationStatusEnum(enum.Enum):
     """Enumeration for reservation status"""
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    RETURNED = "returned"
-    CANCELLED = "cancelled"
-    ADMIN_BLOCK = "admin_block"
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    RETURNED = "RETURNED"
+    CANCELLED = "CANCELLED"
+    ADMIN_BLOCK = "ADMIN_BLOCK"
     CANCELLED_NO_START_PHOTO = "cancelled_no_start_photo"
     CANCELLED_NO_RETURN_PHOTO = "cancelled_no_return_photo"
 
@@ -117,8 +117,8 @@ class ReservationModel(Base):
     formatted_time = Column(String(200), nullable=False)
     
     # Status and metadata
-    status = Column(SQLEnum(ReservationStatusEnum), default=ReservationStatusEnum.ACTIVE, 
-                   nullable=False, index=True)
+    status = Column(SQLEnum(ReservationStatusEnum, values_callable=lambda x: [e.value for e in x]), default=ReservationStatusEnum.ACTIVE, 
+                    nullable=False, index=True)
     photo_url = Column(Text)
     duration_hours = Column(Float, nullable=False)
     
@@ -169,7 +169,7 @@ class ReservationHistoryModel(Base):
     formatted_time = Column(String(200), nullable=False)
     
     # Status and metadata
-    status = Column(SQLEnum(ReservationStatusEnum), nullable=False, index=True)
+    status = Column(SQLEnum(ReservationStatusEnum, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     is_admin_block = Column(Boolean, default=False, nullable=False, index=True)
     photo_url = Column(Text)
     duration_hours = Column(Float, nullable=False)
@@ -204,7 +204,7 @@ class PhotoDebtModel(Base):
     tool_name = Column(String(100), nullable=False, index=True)
     
     # Debt details
-    debt_type = Column(SQLEnum(PhotoDebtTypeEnum), nullable=False)
+    debt_type = Column(SQLEnum(PhotoDebtTypeEnum, values_callable=lambda x: [e.value for e in x]), nullable=False)
     photo_url = Column(Text)  # Photo if eventually provided
     
     # Status

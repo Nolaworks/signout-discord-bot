@@ -371,6 +371,11 @@ class ReservationHistoryRepository:
     
     def archive_reservation(self, reservation: ReservationModel) -> ReservationHistoryModel:
         """Archive a reservation to history"""
+        from database import ReservationStatusEnum
+        
+        # Get status value
+        status_value = reservation.status.value if isinstance(reservation.status, ReservationStatusEnum) else reservation.status
+        
         history = ReservationHistoryModel(
             reservation_id=reservation.id,
             user_id=reservation.user_id,
@@ -381,8 +386,8 @@ class ReservationHistoryRepository:
             end_time=reservation.end_time,
             original_text=reservation.original_text,
             formatted_time=reservation.formatted_time,
-            status=reservation.status,
-            is_admin_block=(reservation.status == ReservationStatusEnum.ADMIN_BLOCK),
+            status=status_value,
+            is_admin_block=(status_value == ReservationStatusEnum.ADMIN_BLOCK.value),
             photo_url=reservation.photo_url,
             duration_hours=reservation.duration_hours,
             created_at=reservation.created_at,
@@ -786,7 +791,7 @@ class PhotoDebtRepository:
             tool_id=tool_id,
             tool_name=tool_name,
             reservation_id=reservation_id,
-            debt_type=debt_type,
+            debt_type=debt_type,  # SQLAlchemy will convert enum to value using values_callable
             due_at=due_at.replace(tzinfo=None) if due_at.tzinfo else due_at
         )
         
