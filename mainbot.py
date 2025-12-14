@@ -216,28 +216,22 @@ async def handle_dm_photo_upload(message: discord.Message):
         from repositories import PhotoDebtRepository
         photo_debt_repo = PhotoDebtRepository(session)
         
-        # First, check for active photo debts
+        # First, check for active photo debts - users cannot clear these themselves
         active_debts = photo_debt_repo.get_active_debts_for_user(user_id)
         
         if active_debts:
-            # Prioritize return photo debts (more urgent)
+            # Inform user they need admin help
             from database import PhotoDebtTypeEnum
             return_debts = [d for d in active_debts if d.debt_type == PhotoDebtTypeEnum.RETURN]
-            debt_to_resolve = return_debts[0] if return_debts else active_debts[0]
-            
-            # Save photo URL
-            photo_url = photo.url
-            
-            # Resolve the debt
-            photo_debt_repo.resolve_debt(debt_to_resolve.id, photo_url=photo_url)
-            session.commit()
+            debt = return_debts[0] if return_debts else active_debts[0]
             
             await message.channel.send(
-                f"Photo received and attached to your **{debt_to_resolve.tool_name}** "
-                f"{debt_to_resolve.debt_type.value} photo requirement.\n\n"
-                f"You can now use Tool Room tools again. Thank you!"
+                f"You have an outstanding photo debt for **{debt.tool_name}** "
+                f"({debt.debt_type.value} photo not provided).\n\n"
+                f"Photo debts must be cleared by an administrator. Please contact an admin "
+                f"and show them this photo to resolve the debt."
             )
-            logger.info(f"Resolved photo debt for {username} - {debt_to_resolve.tool_name}")
+            logger.info(f"User {username} attempted to clear photo debt via DM - requires admin")
             return
         
         # Check for active reservations needing photos (photo_required=True, photo_url=None)
@@ -970,6 +964,17 @@ async def admin_help_cmd(interaction: discord.Interaction):
             "`/admin role revoke user:<name>` - Remove tool access\n"
             "`/admin role sync` - Sync all tool roles\n\n"
             "*Old commands still work: /togglerole, /assignrole, /revokerole, /syncroles*"
+        ),
+        inline=False
+    )
+    
+    # Photo Management
+    embed.add_field(
+        name="Photo Management",
+        value=(
+            "`/clearphotodebt user:<name>` - Clear user's photo debts\n"
+            "`/photoaudit` - View all outstanding photo debts\n"
+            "`/photodebts tool:<name>` - View debts for specific tool"
         ),
         inline=False
     )
