@@ -124,11 +124,25 @@ async def notification_check_task():
             # Check for tool availability (waitlist)
             waitlist_count = await notification_manager.check_tool_availability(session)
             
+            # Check for photo grace period enforcement
+            photo_results = await notification_manager.check_photo_grace_periods(session)
+            
+            # Check for overdue photo debts
+            blocked_count = await notification_manager.check_photo_debt_enforcement(session)
+            
             session.commit()
             
             # Log if notifications were sent
-            if upcoming_count > 0 or expiring_count > 0 or waitlist_count > 0:
-                logger.info(f"Notifications sent: {upcoming_count} reminders, {expiring_count} warnings, {waitlist_count} waitlist")
+            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0)
+            photo_actions = photo_results.get('reservations_cancelled', 0) + blocked_count
+            
+            if total_notifications > 0 or photo_actions > 0:
+                logger.info(
+                    f"Notifications sent: {upcoming_count} reminders, {expiring_count} warnings, "
+                    f"{waitlist_count} waitlist, {photo_results.get('warnings_sent', 0)} photo warnings, "
+                    f"{photo_results.get('reservations_cancelled', 0)} cancelled for missing photos, "
+                    f"{blocked_count} users blocked for photo debts"
+                )
     except Exception as e:
         logger.error(f"Error in notification check task: {e}", exc_info=True)
 
@@ -157,8 +171,18 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @bot.event
 async def on_message(message):
-    """Handle messages in signout channels"""
-    if message.author.bot or user_is_admin(message.author):
+    """Handle messages in signout channels and DM photo uploads"""
+    # Ignore messages from bots
+    if message.author.bot:
+        return
+    
+    # Handle DM photo uploads
+    if isinstance(message.channel, discord.DMChannel):
+        await handle_dm_photo_upload(message)
+        return
+    
+    # Handle signout channel restrictions
+    if user_is_admin(message.author):
         return
     
     if not config.allow_general_chat_in_signout_channels:
@@ -170,6 +194,79 @@ async def on_message(message):
             )
             await asyncio.sleep(5)
             await message.delete()
+
+
+async def handle_dm_photo_upload(message: discord.Message):
+    """Handle photo uploads via DM"""
+    # Check if message has attachments
+    if not message.attachments:
+        return
+    
+    # Get the first image attachment
+    photo = next((att for att in message.attachments if att.content_type and att.content_type.startswith('image/')), None)
+    if not photo:
+        await message.channel.send("Please send an image file (PNG, JPG, etc.)")
+        return
+    
+    user_id = get_user_id(message.author)
+    username = message.author.name
+    
+    with get_db_session() as session:
+        res_repo = ReservationRepository(session)
+        from repositories import PhotoDebtRepository
+        photo_debt_repo = PhotoDebtRepository(session)
+        
+        # First, check for active photo debts
+        active_debts = photo_debt_repo.get_active_debts_for_user(user_id)
+        
+        if active_debts:
+            # Prioritize return photo debts (more urgent)
+            from database import PhotoDebtTypeEnum
+            return_debts = [d for d in active_debts if d.debt_type == PhotoDebtTypeEnum.RETURN]
+            debt_to_resolve = return_debts[0] if return_debts else active_debts[0]
+            
+            # Save photo URL
+            photo_url = photo.url
+            
+            # Resolve the debt
+            photo_debt_repo.resolve_debt(debt_to_resolve.id, photo_url=photo_url)
+            session.commit()
+            
+            await message.channel.send(
+                f"Photo received and attached to your **{debt_to_resolve.tool_name}** "
+                f"{debt_to_resolve.debt_type.value} photo requirement.\n\n"
+                f"You can now use Tool Room tools again. Thank you!"
+            )
+            logger.info(f"Resolved photo debt for {username} - {debt_to_resolve.tool_name}")
+            return
+        
+        # Check for active reservations needing photos (photo_required=True, photo_url=None)
+        active_reservations = res_repo.get_active_for_user(user_id)
+        reservations_needing_photo = [
+            r for r in active_reservations 
+            if r.photo_required and r.photo_url is None
+        ]
+        
+        if not reservations_needing_photo:
+            await message.channel.send(
+                "No active reservations or photo requirements found. "
+                "If you need to attach a photo to a specific reservation, please contact an admin."
+            )
+            return
+        
+        # Prioritize reservation starting soonest
+        reservations_needing_photo.sort(key=lambda r: r.start_time)
+        reservation = reservations_needing_photo[0]
+        
+        # Attach photo to reservation
+        reservation.photo_url = photo.url
+        session.commit()
+        
+        await message.channel.send(
+            f"Photo attached to your **{reservation.tool_name}** reservation "
+            f"({reservation.formatted_time}). Thank you!"
+        )
+        logger.info(f"Attached photo via DM for {username} - {reservation.tool_name}")
 
 
 # ========== Notification and Waitlist Commands ==========
@@ -965,23 +1062,8 @@ async def reservations(interaction: discord.Interaction):
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
 async def signout(interaction: discord.Interaction, time: str, photo: discord.Attachment | None = None):
     """Create a new tool reservation"""
-    # Validate photo requirement
-    is_valid, error_msg = validate_photo_requirement(interaction.channel, photo)
-    if not is_valid:
-        # Provide helpful message with copyable command
-        command_text = f"/signout time:{time} photo:[attach image here]"
-        
-        await interaction.response.send_message(
-            f"{error_msg}\n\n"
-            f"**Copy this command and add your photo:**\n"
-            f"```\n{command_text}\n```\n"
-            f"1. Copy the command above (click to select all)\n"
-            f"2. Paste it in the message field\n"
-            f"3. Click the `photo:` field and attach your image\n"
-            f"4. Press Enter to submit",
-            ephemeral=True
-        )
-        return
+    # Note: Photo validation happens AFTER we parse the time
+    # to allow future reservations without immediate photo requirement
     
     # Validate channel
     try:
@@ -1020,6 +1102,24 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             channel_name=interaction.channel.name,
             is_tool_room=is_tool_room_channel(interaction.channel)
         )
+        
+        # Check for outstanding photo debts if this is a Tool Room tool
+        if tool.is_tool_room and not is_admin:
+            from repositories import PhotoDebtRepository
+            photo_debt_repo = PhotoDebtRepository(session)
+            
+            if photo_debt_repo.has_tool_room_debt(user_id):
+                debts = photo_debt_repo.get_user_tool_room_debts(user_id)
+                debt_list = "\n".join([f"• **{d.tool_name}** - {d.debt_type.value} photo" for d in debts])
+                
+                await interaction.followup.send(
+                    f"You have outstanding photo requirements and cannot sign out Tool Room tools:\n\n"
+                    f"{debt_list}\n\n"
+                    f"Please send the missing photo(s) to this bot via DM, or contact an admin to resolve.",
+                    ephemeral=True
+                )
+                logger.info(f"Photo debt blocked {username} from signing out {tool_name}")
+                return
         
         # Check role requirement (including admins)
         if tool.role_required and tool.role_id:
@@ -1091,6 +1191,33 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         # Get photo URL
         photo_url = await get_photo_url(photo)
         
+        # Determine if photo is required for this reservation
+        is_tool_room = tool.is_tool_room
+        time_until_start = (start_time - get_now(CENTRAL_TZ)).total_seconds() / 60
+        photo_required = is_tool_room
+        
+        # If Tool Room and starts <= 30 min away, photo must be provided NOW
+        if is_tool_room and time_until_start <= 30 and photo_url is None:
+            command_text = f"/signout time:{time} photo:[attach image here]"
+            
+            await interaction.followup.send(
+                f"**Photo Required**\n\n"
+                f"This Tool Room reservation starts in {int(time_until_start)} minutes. "
+                f"Photo must be attached now.\n\n"
+                f"**Copy this command and add your photo:**\n"
+                f"```\n{command_text}\n```\n"
+                f"1. Copy the command above\n"
+                f"2. Paste it in the message field\n"
+                f"3. Click the `photo:` field and attach your image\n"
+                f"4. Press Enter to submit",
+                ephemeral=True
+            )
+            return
+        
+        # If Tool Room and starts > 30 min away, photo can be provided later via DM
+        if is_tool_room and time_until_start > 30 and photo_url is None:
+            logger.info(f"Tool Room reservation without photo - {username} - {tool_name} - starts in {int(time_until_start)} min")
+        
         # Create reservation
         reservation = res_repo.create(
             user_id=user_id,
@@ -1101,7 +1228,8 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             original_text=time,
             formatted_time=formatted_time,
             photo_url=photo_url,
-            status=ReservationStatusEnum.ACTIVE
+            status=ReservationStatusEnum.ACTIVE,
+            photo_required=photo_required
         )
         
         # Increment consecutive signout counter (unless admin)
@@ -1114,6 +1242,13 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         
         # Prepare response
         message = f"Signed out **{tool_name}** for **{time}** by {display_name} — `{formatted_time}`"
+        
+        # Add photo reminder for Tool Room reservations without photos
+        if photo_required and not photo_url:
+            message += (
+                f"\n\n**Photo Required:** You have until 10 minutes after your reservation starts to send a photo "
+                f"of the tool to this bot via DM. You'll get a reminder 15 minutes before your start time."
+            )
         
         # Attach photo if provided
         files = []
@@ -1191,23 +1326,8 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
 @app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
 async def tool_return(interaction: discord.Interaction, reservation: str, photo: discord.Attachment | None = None):
     """Return a tool reservation"""
-    # Validate photo requirement
-    is_valid, error_msg = validate_photo_requirement(interaction.channel, photo)
-    if not is_valid:
-        # Provide helpful message with copyable command
-        command_text = f"/returntool reservation:{reservation} photo:[attach image here]"
-        
-        await interaction.response.send_message(
-            f"{error_msg}\n\n"
-            f"**Copy this command and add your photo:**\n"
-            f"```\n{command_text}\n```\n"
-            f"1. Copy the command above (click to select all)\n"
-            f"2. Paste it in the message field\n"
-            f"3. Click the `photo:` field and attach your image\n"
-            f"4. Press Enter to submit",
-            ephemeral=True
-        )
-        return
+    # Note: We don't validate photo requirement here anymore
+    # Instead, we create photo debt if missing in Tool Room
     
     # Validate channel
     try:
@@ -1222,6 +1342,7 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
     with get_db_session() as session:
         res_repo = ReservationRepository(session)
         history_repo = ReservationHistoryRepository(session)
+        tool_repo = ToolRepository(session)
         
         # Find the reservation
         res = res_repo.get_by_user_and_time(user_id, tool_name, reservation)
@@ -1232,6 +1353,50 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
                 ephemeral=True
             )
             return
+        
+        # Get photo URL if provided
+        photo_url = await get_photo_url(photo) if photo else None
+        
+        # Check if this is a Tool Room tool and photo is missing
+        tool = tool_repo.get_by_name(tool_name)
+        if tool and tool.is_tool_room and not photo_url:
+            # Create photo debt
+            from repositories import PhotoDebtRepository
+            from database import PhotoDebtTypeEnum
+            from time_utils import get_now, CENTRAL_TZ
+            
+            photo_debt_repo = PhotoDebtRepository(session)
+            debt_due = get_now(CENTRAL_TZ) + timedelta(minutes=30)
+            
+            photo_debt_repo.create_debt(
+                user_id=user_id,
+                username=interaction.user.name,
+                tool_id=tool.id,
+                tool_name=tool_name,
+                reservation_id=res.id,
+                debt_type=PhotoDebtTypeEnum.RETURN,
+                due_at=debt_due
+            )
+            
+            # Still mark as returned, but notify user about debt
+            res.status = ReservationStatusEnum.RETURNED
+            res.returned_at = datetime.utcnow()
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"{display_name} returned **{tool_name}** — `{reservation}`\n\n"
+                f"**WARNING: Return photo required!**\n"
+                f"You have 30 minutes to send a photo of the tool to this bot via DM, "
+                f"or you will be blocked from all Tool Room signouts.\n\n"
+                f"Send a photo directly to the bot to resolve this.",
+                ephemeral=False
+            )
+            logger.warning(f"Return without photo - created photo debt: {interaction.user.name} - {tool_name}")
+            return
+        
+        # Normal return (photo provided or not required)
+        if photo_url:
+            res.photo_url = photo_url
         
         # Mark as RETURNED (cleanup task will archive it)
         res.status = ReservationStatusEnum.RETURNED
@@ -1276,7 +1441,7 @@ async def comment(interaction: discord.Interaction, comment: str):
         return
     
     display_name = get_user_display_name(interaction.user)
-    await interaction.response.send_message(f"💬 **{display_name}** says: {comment}")
+    await interaction.response.send_message(f"**{display_name}** says: {comment}")
 
 
 @bot.event
@@ -1331,7 +1496,7 @@ async def on_guild_channel_create(channel):
         session.commit()
         
         # Send welcome message
-        tool_room_note = "\n🏠 This is a Tool Room channel - photo requirements will apply." if is_tool_room else ""
+        tool_room_note = "\nThis is a Tool Room channel - photo requirements will apply." if is_tool_room else ""
         role_msg = f"\nRole created: {role.mention} (role requirement is **enabled**)" if role else ""
         await channel.send(f"Tool '{tool_name}' has been added for reservations.{role_msg}{tool_room_note}")
 

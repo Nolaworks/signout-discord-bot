@@ -99,10 +99,22 @@ class NotificationManager:
             time_until = start_time_aware - get_now(CENTRAL_TZ)
             minutes = int(time_until.total_seconds() / 60)
             
+            # Check if photo is required but missing
+            photo_warning = ""
+            if reservation.photo_required and not reservation.photo_url:
+                photo_warning = (
+                    "\n\n**IMPORTANT: Photo Required**\n"
+                    "This Tool Room reservation requires a photo. You must send a photo of the tool "
+                    "to this bot via DM before your reservation starts, or it will be cancelled.\n\n"
+                    "Reply to this message with a photo of the tool within the next 25 minutes."
+                )
+                # Mark that photo reminder was sent
+                reservation.photo_reminder_sent_at = datetime.utcnow()
+            
             embed = discord.Embed(
                 title="Reservation Reminder",
-                description=f"Your reservation for **{reservation.tool_name}** starts in **{minutes} minutes**!",
-                color=discord.Color.blue()
+                description=f"Your reservation for **{reservation.tool_name}** starts in **{minutes} minutes**!{photo_warning}",
+                color=discord.Color.orange() if photo_warning else discord.Color.blue()
             )
             embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
             embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
@@ -439,6 +451,220 @@ class NotificationManager:
                 self._log_notification_failure(session, admin_id, 'admin_summary', None, None, str(e))
         
         session.flush()
+    
+    # ========== Photo Enforcement ==========
+    
+    async def check_photo_grace_periods(self, session: Session) -> dict:
+        """Check for reservations that need photo enforcement"""
+        from database import ReservationStatusEnum, PhotoDebtTypeEnum
+        from repositories import PhotoDebtRepository, ReservationHistoryRepository
+        
+        now = get_now(CENTRAL_TZ)
+        photo_debt_repo = PhotoDebtRepository(session)
+        history_repo = ReservationHistoryRepository(session)
+        
+        warnings_sent = 0
+        cancellations = 0
+        
+        # Find active reservations that are photo_required and past start time
+        active_reservations = session.query(ReservationModel).filter(
+            ReservationModel.status == ReservationStatusEnum.ACTIVE,
+            ReservationModel.photo_required == True,
+            ReservationModel.photo_url.is_(None),
+            ReservationModel.start_time <= now.replace(tzinfo=None)
+        ).all()
+        
+        for reservation in active_reservations:
+            start_time_aware = CENTRAL_TZ.localize(reservation.start_time)
+            time_since_start = (now - start_time_aware).total_seconds() / 60
+            
+            # If just started (0-1 min) and no warning sent yet, send warning
+            if time_since_start <= 1 and not reservation.photo_warning_sent_at:
+                await self._send_photo_warning(session, reservation)
+                reservation.photo_warning_sent_at = datetime.utcnow()
+                warnings_sent += 1
+            
+            # If past grace period (10 min), cancel reservation
+            elif time_since_start >= 10:
+                await self._cancel_for_missing_photo(session, reservation, photo_debt_repo, history_repo)
+                cancellations += 1
+        
+        session.flush()
+        
+        return {
+            'warnings_sent': warnings_sent,
+            'reservations_cancelled': cancellations
+        }
+    
+    async def _send_photo_warning(self, session: Session, reservation: ReservationModel):
+        """Send warning that reservation will be cancelled without photo"""
+        try:
+            user = await self.bot.fetch_user(int(reservation.user_id))
+            
+            embed = discord.Embed(
+                title="Photo Required - Reservation at Risk",
+                description=(
+                    f"Your reservation for **{reservation.tool_name}** has started, "
+                    f"but you haven't provided the required photo yet.\n\n"
+                    f"**You have 10 minutes to send a photo to this bot via DM, "
+                    f"or your reservation will be cancelled.**\n\n"
+                    f"Simply reply to this message with a photo of the tool."
+                ),
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+            embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
+            embed.set_footer(text="Photo must show the tool/workspace")
+            
+            await user.send(embed=embed)
+            
+            logger.info(f"Sent photo warning to {reservation.username} for {reservation.tool_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send photo warning: {e}", exc_info=True)
+    
+    async def _cancel_for_missing_photo(self, session: Session, reservation: ReservationModel,
+                                       photo_debt_repo: 'PhotoDebtRepository',
+                                       history_repo: 'ReservationHistoryRepository'):
+        """Cancel reservation and create photo debt for missing start photo"""
+        from database import ReservationStatusEnum, PhotoDebtTypeEnum
+        
+        try:
+            # Cancel the reservation
+            reservation.status = ReservationStatusEnum.CANCELLED_NO_START_PHOTO
+            reservation.returned_at = datetime.utcnow()
+            
+            # Archive to history
+            history_repo.archive_reservation(reservation)
+            
+            # Create photo debt (30 min grace period from now)
+            debt_due = get_now(CENTRAL_TZ) + timedelta(minutes=30)
+            photo_debt_repo.create_debt(
+                user_id=reservation.user_id,
+                username=reservation.username,
+                tool_id=reservation.tool_id,
+                tool_name=reservation.tool_name,
+                reservation_id=reservation.id,
+                debt_type=PhotoDebtTypeEnum.START,
+                due_at=debt_due
+            )
+            
+            # Notify user
+            user = await self.bot.fetch_user(int(reservation.user_id))
+            embed = discord.Embed(
+                title="Reservation Cancelled - Missing Photo",
+                description=(
+                    f"Your reservation for **{reservation.tool_name}** has been cancelled "
+                    f"because the required photo was not provided.\n\n"
+                    f"**You have 30 minutes to send the photo via DM, or you will be blocked "
+                    f"from all Tool Room signouts.**\n\n"
+                    f"Reply to this message with a photo to avoid being blocked."
+                ),
+                color=discord.Color.dark_red()
+            )
+            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+            embed.set_footer(text="Contact an admin if you need assistance")
+            
+            await user.send(embed=embed)
+            
+            # Notify admin channel
+            await self._notify_admin_photo_cancellation(reservation)
+            
+            logger.warning(f"Cancelled reservation for {reservation.username} - {reservation.tool_name} - missing start photo")
+            
+        except Exception as e:
+            logger.error(f"Failed to cancel reservation for missing photo: {e}", exc_info=True)
+    
+    async def _notify_admin_photo_cancellation(self, reservation: ReservationModel):
+        """Notify admin channel about photo cancellation"""
+        try:
+            import config
+            if not config.admin_channel_id:
+                return
+            
+            channel = self.bot.get_channel(int(config.admin_channel_id))
+            if not channel:
+                return
+            
+            await channel.send(
+                f"**Reservation Auto-Cancelled - Missing Photo**\n"
+                f"User: {reservation.username}\n"
+                f"Tool: {reservation.tool_name}\n"
+                f"Time: {reservation.formatted_time}\n"
+                f"Reason: No start photo provided within grace period"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to notify admin channel: {e}")
+    
+    async def check_photo_debt_enforcement(self, session: Session) -> int:
+        """Check and enforce overdue photo debts"""
+        from repositories import PhotoDebtRepository
+        
+        now = get_now(CENTRAL_TZ)
+        photo_debt_repo = PhotoDebtRepository(session)
+        blocked_count = 0
+        
+        # Find all unresolved debts that are past due
+        all_debts = photo_debt_repo.get_all_active_debts()
+        overdue_debts = [d for d in all_debts if CENTRAL_TZ.localize(d.due_at) <= now]
+        
+        for debt in overdue_debts:
+            try:
+                user = await self.bot.fetch_user(int(debt.user_id))
+                
+                embed = discord.Embed(
+                    title="Blocked from Tool Room - Missing Photo",
+                    description=(
+                        f"You failed to provide the required photo for **{debt.tool_name}** "
+                        f"within the grace period.\n\n"
+                        f"**You are now blocked from signing out ANY Tool Room tools.**\n\n"
+                        f"To resolve this:\n"
+                        f"1. Send a photo of the tool to this bot via DM\n"
+                        f"2. Or contact an admin for assistance\n\n"
+                        f"Photo Type: {debt.debt_type.value.upper()}"
+                    ),
+                    color=discord.Color.dark_red()
+                )
+                embed.add_field(name="Tool", value=debt.tool_name, inline=True)
+                embed.set_footer(text="This restriction will remain until the photo is provided")
+                
+                await user.send(embed=embed)
+                
+                # Notify admin channel
+                await self._notify_admin_photo_debt_enforced(debt)
+                
+                blocked_count += 1
+                logger.warning(f"Photo debt enforced - blocked {debt.username} from Tool Room")
+                
+            except Exception as e:
+                logger.error(f"Failed to notify user about photo debt enforcement: {e}", exc_info=True)
+        
+        return blocked_count
+    
+    async def _notify_admin_photo_debt_enforced(self, debt: 'PhotoDebtModel'):
+        """Notify admin channel that user is blocked for photo debt"""
+        try:
+            import config
+            if not config.admin_channel_id:
+                return
+            
+            channel = self.bot.get_channel(int(config.admin_channel_id))
+            if not channel:
+                return
+            
+            await channel.send(
+                f"**User Blocked from Tool Room - Photo Debt**\n"
+                f"User: {debt.username}\n"
+                f"Tool: {debt.tool_name}\n"
+                f"Photo Type: {debt.debt_type.value}\n"
+                f"Created: {debt.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+                f"Due: {debt.due_at.strftime('%Y-%m-%d %H:%M')}\n\n"
+                f"User will remain blocked until photo is provided or admin clears debt."
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to notify admin channel about photo debt: {e}")
     
     # ========== Utility Methods ==========
     

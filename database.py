@@ -22,6 +22,14 @@ class ReservationStatusEnum(enum.Enum):
     RETURNED = "returned"
     CANCELLED = "cancelled"
     ADMIN_BLOCK = "admin_block"
+    CANCELLED_NO_START_PHOTO = "cancelled_no_start_photo"
+    CANCELLED_NO_RETURN_PHOTO = "cancelled_no_return_photo"
+
+
+class PhotoDebtTypeEnum(enum.Enum):
+    """Type of photo debt"""
+    START = "start"
+    RETURN = "return"
 
 
 class UserModel(Base):
@@ -114,6 +122,11 @@ class ReservationModel(Base):
     photo_url = Column(Text)
     duration_hours = Column(Float, nullable=False)
     
+    # Photo enforcement fields
+    photo_required = Column(Boolean, default=False, nullable=False)
+    photo_reminder_sent_at = Column(DateTime)
+    photo_warning_sent_at = Column(DateTime)
+    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -173,6 +186,44 @@ class ReservationHistoryModel(Base):
     
     def __repr__(self):
         return f"<ReservationHistory(user={self.username}, tool={self.tool_name}, archived={self.archived_at})>"
+
+
+class PhotoDebtModel(Base):
+    """Track outstanding photo requirements"""
+    __tablename__ = "photo_debts"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Foreign keys
+    user_id = Column(String(50), ForeignKey("users.user_id"), nullable=False, index=True)
+    tool_id = Column(Integer, ForeignKey("tools.id"), nullable=False, index=True)
+    reservation_id = Column(Integer, index=True)  # Which reservation owes photo
+    
+    # Cached info
+    username = Column(String(100), nullable=False)
+    tool_name = Column(String(100), nullable=False, index=True)
+    
+    # Debt details
+    debt_type = Column(SQLEnum(PhotoDebtTypeEnum), nullable=False)
+    photo_url = Column(Text)  # Photo if eventually provided
+    
+    # Status
+    resolved_at = Column(DateTime)
+    cleared_by_admin = Column(Boolean, default=False)
+    admin_user_id = Column(String(50))  # Which admin cleared it
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    due_at = Column(DateTime, nullable=False, index=True)  # When grace period expires
+    
+    __table_args__ = (
+        Index('idx_photo_debt_active', 'user_id', 'resolved_at'),
+        Index('idx_photo_debt_tool', 'tool_id', 'resolved_at'),
+    )
+    
+    def __repr__(self):
+        status = "resolved" if self.resolved_at else "outstanding"
+        return f"<PhotoDebt(user={self.username}, tool={self.tool_name}, type={self.debt_type.value}, status={status})>"
 
 
 class ToolStatisticsModel(Base):

@@ -207,7 +207,8 @@ class ReservationRepository:
               start_time: datetime, end_time: datetime,
               original_text: str, formatted_time: str,
               photo_url: Optional[str] = None,
-              status: ReservationStatusEnum = ReservationStatusEnum.ACTIVE) -> ReservationModel:
+              status: ReservationStatusEnum = ReservationStatusEnum.ACTIVE,
+              photo_required: bool = False) -> ReservationModel:
         """Create a new reservation"""
         # Get tool to link foreign key
         tool = self.session.query(ToolModel).filter_by(name=tool_name).first()
@@ -231,7 +232,8 @@ class ReservationRepository:
             formatted_time=formatted_time,
             photo_url=photo_url,
             status=status,
-            duration_hours=duration
+            duration_hours=duration,
+            photo_required=photo_required
         )
         
         self.session.add(reservation)
@@ -764,3 +766,107 @@ class ConsecutiveSignoutRepository:
         if latest_res:
             # Someone else signed it out, reset this user's count
             self.reset_consecutive(user_id, tool_id)
+
+
+class PhotoDebtRepository:
+    """Repository for photo debt operations"""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def create_debt(self, user_id: str, username: str, tool_id: int, tool_name: str,
+                   reservation_id: int, debt_type: 'PhotoDebtTypeEnum',
+                   due_at: datetime) -> 'PhotoDebtModel':
+        """Create a new photo debt"""
+        from database import PhotoDebtModel
+        
+        debt = PhotoDebtModel(
+            user_id=user_id,
+            username=username,
+            tool_id=tool_id,
+            tool_name=tool_name,
+            reservation_id=reservation_id,
+            debt_type=debt_type,
+            due_at=due_at.replace(tzinfo=None) if due_at.tzinfo else due_at
+        )
+        
+        self.session.add(debt)
+        return debt
+    
+    def get_active_debts_for_user(self, user_id: str) -> List['PhotoDebtModel']:
+        """Get all unresolved photo debts for a user"""
+        from database import PhotoDebtModel
+        
+        return self.session.query(PhotoDebtModel).filter(
+            and_(
+                PhotoDebtModel.user_id == user_id,
+                PhotoDebtModel.resolved_at.is_(None)
+            )
+        ).all()
+    
+    def get_active_debts_for_tool(self, tool_id: int) -> List['PhotoDebtModel']:
+        """Get all unresolved photo debts for a tool"""
+        from database import PhotoDebtModel
+        
+        return self.session.query(PhotoDebtModel).filter(
+            and_(
+                PhotoDebtModel.tool_id == tool_id,
+                PhotoDebtModel.resolved_at.is_(None)
+            )
+        ).all()
+    
+    def get_all_active_debts(self) -> List['PhotoDebtModel']:
+        """Get all unresolved photo debts"""
+        from database import PhotoDebtModel
+        
+        return self.session.query(PhotoDebtModel).filter(
+            PhotoDebtModel.resolved_at.is_(None)
+        ).order_by(PhotoDebtModel.due_at).all()
+    
+    def resolve_debt(self, debt_id: int, photo_url: Optional[str] = None,
+                    admin_user_id: Optional[str] = None) -> bool:
+        """Resolve a photo debt"""
+        from database import PhotoDebtModel
+        
+        debt = self.session.query(PhotoDebtModel).filter_by(id=debt_id).first()
+        if not debt:
+            return False
+        
+        debt.resolved_at = datetime.utcnow()
+        debt.photo_url = photo_url
+        
+        if admin_user_id:
+            debt.cleared_by_admin = True
+            debt.admin_user_id = admin_user_id
+        
+        return True
+    
+    def has_tool_room_debt(self, user_id: str) -> bool:
+        """Check if user has any unresolved photo debt for Tool Room tools"""
+        from database import PhotoDebtModel, ToolModel
+        
+        debt = self.session.query(PhotoDebtModel).join(
+            ToolModel, PhotoDebtModel.tool_id == ToolModel.id
+        ).filter(
+            and_(
+                PhotoDebtModel.user_id == user_id,
+                PhotoDebtModel.resolved_at.is_(None),
+                ToolModel.is_tool_room == True
+            )
+        ).first()
+        
+        return debt is not None
+    
+    def get_user_tool_room_debts(self, user_id: str) -> List['PhotoDebtModel']:
+        """Get user's outstanding Tool Room photo debts"""
+        from database import PhotoDebtModel, ToolModel
+        
+        return self.session.query(PhotoDebtModel).join(
+            ToolModel, PhotoDebtModel.tool_id == ToolModel.id
+        ).filter(
+            and_(
+                PhotoDebtModel.user_id == user_id,
+                PhotoDebtModel.resolved_at.is_(None),
+                ToolModel.is_tool_room == True
+            )
+        ).all()

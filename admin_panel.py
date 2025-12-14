@@ -1897,11 +1897,156 @@ class AdminPanel(commands.Cog):
             await interaction.response.send_message("🚫 Admin access required!", ephemeral=True)
         else:
             logger.error(f"Command error: {error}", exc_info=True)
-            if not interaction.response.is_done():
+            if not interaction.response.send_message:
                 await interaction.response.send_message(
                     f"An error occurred: {str(error)}",
                     ephemeral=True
                 )
+    
+    # ========== Photo Debt Management Commands ==========
+    
+    @app_commands.command(name="clearphotodebt", description="Admin: Clear a user's photo debt")
+    @is_admin_check()
+    @app_commands.describe(user="Username of the user")
+    async def clear_photo_debt(self, interaction: discord.Interaction, user: str):
+        """Clear all photo debts for a user"""
+        with get_db_session() as session:
+            from repositories import PhotoDebtRepository
+            user_repo = UserRepository(session)
+            photo_debt_repo = PhotoDebtRepository(session)
+            
+            # Find user
+            db_user = user_repo.get_by_username(user)
+            if not db_user:
+                await interaction.response.send_message(f"User `{user}` not found.", ephemeral=True)
+                return
+            
+            # Get their active debts
+            debts = photo_debt_repo.get_active_debts_for_user(db_user.user_id)
+            
+            if not debts:
+                await interaction.response.send_message(
+                    f"User **{user}** has no outstanding photo debts.",
+                    ephemeral=True
+                )
+                return
+            
+            # Clear all debts
+            admin_id = get_user_id(interaction.user)
+            for debt in debts:
+                photo_debt_repo.resolve_debt(debt.id, admin_user_id=admin_id)
+            
+            session.commit()
+            
+            debt_list = "\n".join([f"• {d.tool_name} - {d.debt_type.value} photo" for d in debts])
+            
+            await interaction.response.send_message(
+                f"Cleared {len(debts)} photo debt(s) for **{user}**:\n{debt_list}",
+                ephemeral=False
+            )
+            logger.info(f"Admin {interaction.user.name} cleared {len(debts)} photo debts for {user}")
+    
+    @app_commands.command(name="photoaudit", description="Admin: View all outstanding photo debts")
+    @is_admin_check()
+    async def photo_audit(self, interaction: discord.Interaction):
+        """View all outstanding photo debts"""
+        with get_db_session() as session:
+            from repositories import PhotoDebtRepository
+            photo_debt_repo = PhotoDebtRepository(session)
+            
+            all_debts = photo_debt_repo.get_all_active_debts()
+            
+            if not all_debts:
+                await interaction.response.send_message(
+                    "No outstanding photo debts.",
+                    ephemeral=True
+                )
+                return
+            
+            # Group by user
+            from collections import defaultdict
+            debts_by_user = defaultdict(list)
+            for debt in all_debts:
+                debts_by_user[debt.username].append(debt)
+            
+            embed = discord.Embed(
+                title="Photo Debt Audit",
+                description=f"Total: {len(all_debts)} outstanding photo debts from {len(debts_by_user)} users",
+                color=discord.Color.red()
+            )
+            
+            for username, user_debts in list(debts_by_user.items())[:10]:  # Limit to 10 users
+                debt_details = "\n".join([
+                    f"• {d.tool_name} - {d.debt_type.value} (due: {d.due_at.strftime('%m/%d %H:%M')})"
+                    for d in user_debts
+                ])
+                embed.add_field(
+                    name=f"{username} ({len(user_debts)})",
+                    value=debt_details,
+                    inline=False
+                )
+            
+            if len(debts_by_user) > 10:
+                embed.set_footer(text=f"Showing 10 of {len(debts_by_user)} users. Use /photodebts for specific tool.")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @app_commands.command(name="photodebts", description="Admin: View photo debts for a specific tool")
+    @is_admin_check()
+    @app_commands.describe(tool="Tool name (leave empty for current channel)")
+    async def photo_debts_for_tool(self, interaction: discord.Interaction, tool: str = None):
+        """View photo debts for a specific tool"""
+        # Get tool name
+        if tool:
+            tool_name = tool
+        else:
+            try:
+                tool_name = get_tool_from_channel_or_error(interaction.channel)
+            except InvalidToolChannelError as e:
+                await interaction.response.send_message(e.user_message, ephemeral=True)
+                return
+        
+        with get_db_session() as session:
+            from repositories import PhotoDebtRepository
+            tool_repo = ToolRepository(session)
+            photo_debt_repo = PhotoDebtRepository(session)
+            
+            # Get tool
+            db_tool = tool_repo.get_by_name(tool_name)
+            if not db_tool:
+                await interaction.response.send_message(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get debts
+            debts = photo_debt_repo.get_active_debts_for_tool(db_tool.id)
+            
+            if not debts:
+                await interaction.response.send_message(
+                    f"No outstanding photo debts for **{tool_name}**.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title=f"Photo Debts: {tool_name}",
+                description=f"{len(debts)} outstanding photo debts",
+                color=discord.Color.orange()
+            )
+            
+            for debt in debts[:15]:  # Limit to 15
+                embed.add_field(
+                    name=debt.username,
+                    value=f"{debt.debt_type.value} photo - due: {debt.due_at.strftime('%m/%d %H:%M')}",
+                    inline=True
+                )
+            
+            if len(debts) > 15:
+                embed.set_footer(text=f"Showing 15 of {len(debts)} debts")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):
