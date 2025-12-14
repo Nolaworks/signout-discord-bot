@@ -455,11 +455,14 @@ class ConsecutiveSignoutRepository:
         
         return limit
     
-    def set_limit(self, tool_id: int, tool_name: str, max_consecutive: int, cooldown_hours: int) -> ToolSignoutLimitModel:
+    def set_limit(self, tool_id: int, tool_name: str, max_consecutive: int, cooldown_hours: int,
+                 reset_after_hours: int = 24, min_total_hours: float = 48.0) -> ToolSignoutLimitModel:
         """Set or update consecutive signout limit for a tool"""
         limit = self.get_or_create_limit(tool_id, tool_name)
         limit.max_consecutive_signouts = max_consecutive
         limit.cooldown_hours = cooldown_hours
+        limit.reset_after_hours = reset_after_hours
+        limit.min_total_hours = min_total_hours
         limit.updated_at = datetime.utcnow()
         return limit
     
@@ -481,9 +484,10 @@ class ConsecutiveSignoutRepository:
         ).first()
     
     def increment_consecutive(self, user_id: str, username: str, tool_id: int, tool_name: str, 
-                             reservation_end_time: datetime) -> ConsecutiveSignoutTracker:
-        """Increment consecutive signout count"""
+                             reservation_end_time: datetime, duration_hours: float) -> ConsecutiveSignoutTracker:
+        """Increment consecutive signout count and accumulate hours"""
         tracker = self.get_tracker(user_id, tool_id)
+        limit = self.get_limit(tool_id)
         
         if not tracker:
             tracker = ConsecutiveSignoutTracker(
@@ -492,12 +496,32 @@ class ConsecutiveSignoutRepository:
                 tool_id=tool_id,
                 tool_name=tool_name,
                 consecutive_count=1,
+                accumulated_hours=duration_hours,
                 last_signout_ended_at=reservation_end_time
             )
             self.session.add(tracker)
         else:
-            tracker.consecutive_count += 1
-            tracker.last_signout_ended_at=reservation_end_time
+            # Check if we should reset based on time and accumulated hours
+            should_reset = False
+            if limit and limit.reset_after_hours > 0:
+                hours_since_last = (datetime.utcnow() - tracker.last_signout_ended_at).total_seconds() / 3600
+                
+                # Reset if: enough time has passed AND accumulated hours are below threshold
+                if hours_since_last >= limit.reset_after_hours and tracker.accumulated_hours < limit.min_total_hours:
+                    should_reset = True
+                    logger.info(f"Resetting consecutive counter for {username} on {tool_name}: "
+                              f"{hours_since_last:.1f}h elapsed, {tracker.accumulated_hours:.1f}h < {limit.min_total_hours}h threshold")
+            
+            if should_reset:
+                # Reset to 1 (this new signout)
+                tracker.consecutive_count = 1
+                tracker.accumulated_hours = duration_hours
+            else:
+                # Continue accumulating
+                tracker.consecutive_count += 1
+                tracker.accumulated_hours += duration_hours
+            
+            tracker.last_signout_ended_at = reservation_end_time
             tracker.updated_at = datetime.utcnow()
         
         return tracker
@@ -507,6 +531,7 @@ class ConsecutiveSignoutRepository:
         tracker = self.get_tracker(user_id, tool_id)
         if tracker:
             tracker.consecutive_count = 0
+            tracker.accumulated_hours = 0.0
             tracker.cooldown_expires_at = None
             tracker.updated_at = datetime.utcnow()
     

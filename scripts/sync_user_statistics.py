@@ -20,7 +20,11 @@ from sqlalchemy import func, desc
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db_session import get_db_session
-from database import UserModel, ReservationModel, ReservationHistoryModel, UserStatisticsModel, UserToolStatisticsModel, ToolModel
+from database import (
+    UserModel, ReservationModel, ReservationHistoryModel, 
+    UserStatisticsModel, UserToolStatisticsModel, ToolModel,
+    ToolStatisticsModel, ReservationStatusEnum
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sync_user_statistics")
@@ -158,6 +162,122 @@ def compute_for_user(session, user: UserModel, apply: bool = False):
     }
 
 
+def compute_for_tool(session, tool: ToolModel, apply: bool = False):
+    tool_id = tool.id
+    tool_name = tool.name
+
+    # Count active reservations
+    active_count = session.query(func.count(ReservationModel.id)).filter(
+        ReservationModel.tool_id == tool_id,
+        ReservationModel.status.in_([ReservationStatusEnum.ACTIVE, ReservationStatusEnum.ADMIN_BLOCK])
+    ).scalar() or 0
+
+    # Count history
+    history_count = session.query(func.count(ReservationHistoryModel.id)).filter(
+        ReservationHistoryModel.tool_id == tool_id
+    ).scalar() or 0
+    
+    total_reservations = (active_count or 0) + (history_count or 0)
+
+    # Sum durations from history
+    history_hours = session.query(func.coalesce(func.sum(ReservationHistoryModel.duration_hours), 0.0)).filter(
+        ReservationHistoryModel.tool_id == tool_id
+    ).scalar() or 0.0
+    
+    # Sum durations from active
+    active_hours = session.query(func.coalesce(func.sum(ReservationModel.duration_hours), 0.0)).filter(
+        ReservationModel.tool_id == tool_id
+    ).scalar() or 0.0
+    
+    total_hours = (history_hours or 0.0) + (active_hours or 0.0)
+    avg_hours = (total_hours / total_reservations) if total_reservations > 0 else 0.0
+
+    # Most frequent user
+    hist_users = session.query(
+        ReservationHistoryModel.user_id,
+        ReservationHistoryModel.username,
+        func.count(ReservationHistoryModel.id).label('cnt')
+    ).filter(ReservationHistoryModel.tool_id == tool_id).group_by(
+        ReservationHistoryModel.user_id,
+        ReservationHistoryModel.username
+    )
+
+    active_users = session.query(
+        ReservationModel.user_id,
+        ReservationModel.username,
+        func.count(ReservationModel.id).label('cnt')
+    ).filter(ReservationModel.tool_id == tool_id).group_by(
+        ReservationModel.user_id,
+        ReservationModel.username
+    )
+
+    # Combine user counts
+    user_counts = {}
+    for row in hist_users:
+        user_counts[row.user_id] = {'username': row.username, 'count': row.cnt or 0}
+    
+    for row in active_users:
+        if row.user_id in user_counts:
+            user_counts[row.user_id]['count'] += (row.cnt or 0)
+        else:
+            user_counts[row.user_id] = {'username': row.username, 'count': row.cnt or 0}
+
+    most_frequent_user = None
+    if user_counts:
+        most_frequent_uid = max(user_counts, key=lambda k: user_counts[k]['count'])
+        most_frequent_user = {
+            'user_id': most_frequent_uid,
+            'username': user_counts[most_frequent_uid]['username'],
+            'count': user_counts[most_frequent_uid]['count']
+        }
+
+    # Upsert tool_statistics
+    ts = session.query(ToolStatisticsModel).filter(ToolStatisticsModel.tool_id == tool_id).first()
+    if not ts:
+        if apply:
+            ts = ToolStatisticsModel(
+                tool_id=tool_id,
+                tool_name=tool_name,
+                active_reservations=active_count,
+                total_reservations=total_reservations,
+                total_hours_reserved=total_hours,
+                average_duration_hours=avg_hours
+            )
+            if most_frequent_user:
+                ts.most_frequent_user_id = most_frequent_user['user_id']
+                ts.most_frequent_username = most_frequent_user['username']
+                ts.most_frequent_user_count = most_frequent_user['count']
+            session.add(ts)
+    else:
+        if apply:
+            ts.active_reservations = active_count
+            ts.total_reservations = total_reservations
+            ts.total_hours_reserved = total_hours
+            ts.average_duration_hours = avg_hours
+            if most_frequent_user:
+                ts.most_frequent_user_id = most_frequent_user['user_id']
+                ts.most_frequent_username = most_frequent_user['username']
+                ts.most_frequent_user_count = most_frequent_user['count']
+            else:
+                ts.most_frequent_user_id = None
+                ts.most_frequent_username = None
+                ts.most_frequent_user_count = 0
+
+    # Also update the tools table
+    if apply:
+        tool.total_reservations = total_reservations
+        tool.total_time_hours = total_hours
+
+    return {
+        'tool_id': tool_id,
+        'tool_name': tool_name,
+        'active': active_count,
+        'total_reservations': total_reservations,
+        'total_hours': total_hours,
+        'most_frequent_user': most_frequent_user
+    }
+
+
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--apply', action='store_true', help='Apply changes (otherwise dry-run)')
@@ -167,8 +287,11 @@ def main(argv):
     apply = args.apply
     target_user = args.user
 
-    results = []
+    user_results = []
+    tool_results = []
+    
     with get_db_session() as session:
+        # Sync user statistics
         if target_user:
             users = session.query(UserModel).filter(UserModel.user_id == target_user).all()
         else:
@@ -176,7 +299,13 @@ def main(argv):
 
         for user in users:
             res = compute_for_user(session, user, apply=apply)
-            results.append(res)
+            user_results.append(res)
+        
+        # Sync tool statistics
+        tools = session.query(ToolModel).all()
+        for tool in tools:
+            res = compute_for_tool(session, tool, apply=apply)
+            tool_results.append(res)
 
         if apply:
             session.commit()
@@ -184,11 +313,18 @@ def main(argv):
         else:
             logger.info('Dry-run complete; no changes applied')
 
-    # Print short summary
-    for r in results:
+    # Print summaries
+    logger.info("\n=== User Statistics ===")
+    for r in user_results:
         mu = r['most_used_tool']
         mu_text = f"{mu['tool_name']} ({mu['count']})" if mu else "None"
         logger.info(f"{r['username']} ({r['user_id']}): total_res={r['total_reservations']} hours={r['total_hours']:.2f} most_used={mu_text}")
+    
+    logger.info("\n=== Tool Statistics ===")
+    for r in tool_results:
+        mfu = r['most_frequent_user']
+        mfu_text = f"{mfu['username']} ({mfu['count']})" if mfu else "None"
+        logger.info(f"{r['tool_name']} ({r['tool_id']}): total_res={r['total_reservations']} hours={r['total_hours']:.2f} most_frequent={mfu_text}")
 
 
 if __name__ == '__main__':

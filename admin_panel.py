@@ -968,11 +968,14 @@ class AdminPanel(commands.Cog):
     @app_commands.command(name="setresignoutlimit", description="[ADMIN] Set max consecutive re-signouts for current tool")
     @app_commands.describe(
         max_consecutive="Maximum times a user can sign out this tool in a row (0 = no limit)",
-        cooldown_hours="Hours user must wait after reaching limit before they can sign out again"
+        cooldown_hours="Hours user must wait after reaching limit before they can sign out again",
+        reset_after_hours="Reset counter after this many hours of inactivity (default: 24)",
+        min_total_hours="Only reset if accumulated hours < this threshold (default: 48)"
     )
     @app_commands.default_permissions(administrator=True)
     @is_admin_check()
-    async def set_resignout_limit(self, interaction: discord.Interaction, max_consecutive: int, cooldown_hours: int):
+    async def set_resignout_limit(self, interaction: discord.Interaction, max_consecutive: int, cooldown_hours: int,
+                                 reset_after_hours: int = 24, min_total_hours: float = 48.0):
         """Set consecutive signout limit for a tool"""
         # Validate channel
         try:
@@ -996,6 +999,20 @@ class AdminPanel(commands.Cog):
             )
             return
         
+        if reset_after_hours < 1:
+            await interaction.response.send_message(
+                "Reset period must be at least 1 hour.",
+                ephemeral=True
+            )
+            return
+        
+        if min_total_hours < 0:
+            await interaction.response.send_message(
+                "Minimum total hours must be 0 or greater.",
+                ephemeral=True
+            )
+            return
+        
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
             consecutive_repo = ConsecutiveSignoutRepository(session)
@@ -1009,26 +1026,33 @@ class AdminPanel(commands.Cog):
                 return
             
             # Set the limit
-            limit = consecutive_repo.set_limit(tool.id, tool_name, max_consecutive, cooldown_hours)
+            limit = consecutive_repo.set_limit(tool.id, tool_name, max_consecutive, cooldown_hours,
+                                              reset_after_hours, min_total_hours)
             session.commit()
             
             if max_consecutive == 0:
                 await interaction.response.send_message(
-                    f" Removed consecutive signout limit for **{tool_name}**.\n"
+                    f"✅ Removed consecutive signout limit for **{tool_name}**.\n"
                     f"Users can now sign it out unlimited times in a row.",
                     ephemeral=False
                 )
             else:
                 await interaction.response.send_message(
-                    f" Set consecutive signout limit for **{tool_name}**:\n\n"
+                    f"✅ Set consecutive signout limit for **{tool_name}**:\n\n"
                     f"• **Maximum consecutive signouts:** {max_consecutive}\n"
-                    f"• **Cooldown period:** {cooldown_hours} hours\n\n"
-                    f"Users who sign out this tool {max_consecutive} times in a row will need to wait "
-                    f"{cooldown_hours} hours before they can sign it out again.",
+                    f"• **Cooldown period:** {cooldown_hours} hours\n"
+                    f"• **Auto-reset after:** {reset_after_hours} hours of inactivity\n"
+                    f"• **Reset threshold:** {min_total_hours} hours accumulated time\n\n"
+                    f"**How it works:**\n"
+                    f"Users who sign out this tool {max_consecutive} times in a row will wait "
+                    f"{cooldown_hours} hours before signing out again.\n\n"
+                    f"The counter automatically resets if {reset_after_hours} hours pass since their last signout "
+                    f"AND they've accumulated less than {min_total_hours} total hours.",
                     ephemeral=False
                 )
             
-            logger.info(f"Admin {interaction.user.name} set resignout limit for {tool_name}: max={max_consecutive}, cooldown={cooldown_hours}h")
+            logger.info(f"Admin {interaction.user.name} set resignout limit for {tool_name}: max={max_consecutive}, "
+                       f"cooldown={cooldown_hours}h, reset_after={reset_after_hours}h, min_total={min_total_hours}h")
 
     @app_commands.command(name="viewresignoutlimits", description="[ADMIN] View all configured re-signout limits")
     @app_commands.default_permissions(administrator=True)

@@ -350,6 +350,8 @@ class ToolSignoutLimitModel(Base):
     # Limit settings
     max_consecutive_signouts = Column(Integer, default=0, nullable=False)  # 0 = no limit
     cooldown_hours = Column(Integer, default=24, nullable=False)  # Hours before user can sign out again
+    reset_after_hours = Column(Integer, default=24, nullable=False)  # Reset counter after this many hours of inactivity
+    min_total_hours = Column(Float, default=48.0, nullable=False)  # Only apply time-based reset if accumulated hours < this
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -361,10 +363,12 @@ class ToolSignoutLimitModel(Base):
     __table_args__ = (
         CheckConstraint('max_consecutive_signouts >= 0', name='check_max_consecutive_positive'),
         CheckConstraint('cooldown_hours > 0', name='check_cooldown_positive'),
+        CheckConstraint('reset_after_hours > 0', name='check_reset_after_positive'),
+        CheckConstraint('min_total_hours >= 0', name='check_min_total_nonnegative'),
     )
     
     def __repr__(self):
-        return f"<ToolSignoutLimit(tool={self.tool_name}, max={self.max_consecutive_signouts}, cooldown={self.cooldown_hours}h)>"
+        return f"<ToolSignoutLimit(tool={self.tool_name}, max={self.max_consecutive_signouts}, cooldown={self.cooldown_hours}h, reset={self.reset_after_hours}h, min={self.min_total_hours}h)>"
 
 
 class ConsecutiveSignoutTracker(Base):
@@ -381,6 +385,7 @@ class ConsecutiveSignoutTracker(Base):
     
     # Tracking data
     consecutive_count = Column(Integer, default=0, nullable=False)
+    accumulated_hours = Column(Float, default=0.0, nullable=False)  # Total hours of consecutive signouts
     last_signout_ended_at = Column(DateTime, nullable=False)  # When their last reservation ended
     cooldown_expires_at = Column(DateTime)  # When cooldown period ends (null if not in cooldown)
     

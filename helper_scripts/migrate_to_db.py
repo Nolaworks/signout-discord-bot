@@ -1,15 +1,27 @@
 """
 Migration script to transfer data from JSON/CSV files to PostgreSQL database.
-Run this once to migrate existing data.
+Run this once to migrate existing data from production.
 
-Updated to include:
-- Consecutive signout tracking tables
-- Role-based permission columns in tools table
+This script handles:
+- Tools from archive/tools.json or tools.json
+- History from archive/history.csv or history.csv
+- Statistics sync after migration
+
+Usage:
+    python migrate_to_db.py [--archive]
+    
+    --archive: Use archive/ directory for source files (default if archive exists)
 """
 import csv
+import json
 import logging
+import os
+import sys
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db_session import get_db_session, init_database
 from repositories import (
@@ -18,23 +30,70 @@ from repositories import (
 )
 from file_utils import load_tools, backup_json_file
 from time_utils import parse_time_range, CENTRAL_TZ
-from database import ReservationStatusEnum
+from database import ReservationStatusEnum, ReservationHistoryModel
 from config import get_config
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+# Will be set by main() based on args
+USE_ARCHIVE = False
+CUSTOM_PATH = None  # Custom directory path for source files
+
+# Base directory for the project
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_tools_file() -> str:
+    """Get path to tools.json, checking custom path or archive first"""
+    if CUSTOM_PATH:
+        custom_file = os.path.join(CUSTOM_PATH, 'tools.json')
+        if os.path.exists(custom_file):
+            return custom_file
+    if USE_ARCHIVE:
+        archive_path = os.path.join(BASE_DIR, 'archive', 'tools.json')
+        if os.path.exists(archive_path):
+            return archive_path
+    return os.path.join(BASE_DIR, 'tools.json')
+
+
+def get_history_file() -> str:
+    """Get path to history.csv, checking custom path or archive first"""
+    if CUSTOM_PATH:
+        custom_file = os.path.join(CUSTOM_PATH, 'history.csv')
+        if os.path.exists(custom_file):
+            return custom_file
+    if USE_ARCHIVE:
+        archive_path = os.path.join(BASE_DIR, 'archive', 'history.csv')
+        if os.path.exists(archive_path):
+            return archive_path
+    return os.path.join(BASE_DIR, 'history.csv')
+
+
+def load_tools_from_file(filepath: str) -> Dict[str, Any]:
+    """Load tools from a specific file path"""
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Could not load {filepath}: {e}")
+        return {"tools": {}}
 
 
 def migrate_tools_and_reservations():
     """Migrate tools and active reservations from tools.json"""
     logger.info("Starting migration of tools and reservations...")
     
-    # Backup existing JSON file
-    config = get_config()
-    backup_json_file(config.tools_file)
+    tools_file = get_tools_file()
+    logger.info(f"Using tools file: {tools_file}")
+    
+    if not os.path.exists(tools_file):
+        logger.warning(f"No tools file found at {tools_file}")
+        return
     
     # Load existing data
-    data = load_tools()
+    data = load_tools_from_file(tools_file)
     
     if not data.get("tools"):
         logger.warning("No tools found in tools.json")
@@ -49,6 +108,7 @@ def migrate_tools_and_reservations():
         user_repo = UserRepository(session)
         res_repo = ReservationRepository(session)
         
+        # First pass: Create all tools
         for tool_name, tool_data in data["tools"].items():
             try:
                 # Create or update tool
@@ -59,60 +119,64 @@ def migrate_tools_and_reservations():
                 )
                 tools_migrated += 1
                 logger.info(f"Migrated tool: {tool_name}")
-                
-                # Migrate reservations
-                reservations = tool_data.get("reservations", [])
-                for res in reservations:
-                    try:
-                        if not isinstance(res, dict):
-                            logger.warning(f"Skipping malformed reservation: {res}")
-                            continue
-                        
-                        username = res.get("user", "unknown")
-                        time_str = res.get("time", "")
-                        original_text = res.get("original_text", time_str)
-                        
-                        if not time_str:
-                            logger.warning(f"Skipping reservation with no time: {res}")
-                            continue
-                        
-                        # Parse time
-                        start_time, end_time = parse_time_range(time_str, CENTRAL_TZ)
-                        
-                        # Determine if this is an admin block
-                        status = ReservationStatusEnum.ADMIN_BLOCK if username == "admin-block" else ReservationStatusEnum.ACTIVE
-                        
-                        # Create fake user_id for migration (will be updated on first real use)
-                        user_id = f"migrated_{username}"
-                        
-                        # Create user if not exists
-                        user = user_repo.get_or_create(
-                            user_id=user_id,
-                            username=username
-                        )
-                        
-                        # Create reservation
-                        reservation = res_repo.create(
-                            user_id=user.user_id,
-                            username=username,
-                            tool_name=tool_name,
-                            start_time=start_time,
-                            end_time=end_time,
-                            original_text=original_text,
-                            formatted_time=time_str,
-                            status=status
-                        )
-                        
-                        reservations_migrated += 1
-                        logger.debug(f"Migrated reservation: {username} - {time_str}")
-                        
-                    except Exception as e:
-                        logger.error(f"Error migrating reservation {res}: {e}")
-                        errors += 1
-            
             except Exception as e:
                 logger.error(f"Error migrating tool {tool_name}: {e}")
                 errors += 1
+        
+        # Commit tools before creating reservations
+        session.flush()
+        
+        # Second pass: Create reservations
+        for tool_name, tool_data in data["tools"].items():
+            reservations = tool_data.get("reservations", [])
+            for res in reservations:
+                try:
+                    if not isinstance(res, dict):
+                        logger.warning(f"Skipping malformed reservation: {res}")
+                        continue
+                    
+                    username = res.get("user", "unknown")
+                    time_str = res.get("time", "")
+                    original_text = res.get("original_text", time_str)
+                    
+                    if not time_str:
+                        logger.warning(f"Skipping reservation with no time: {res}")
+                        continue
+                    
+                    # Parse time
+                    start_time, end_time = parse_time_range(time_str, CENTRAL_TZ)
+                    
+                    # Determine if this is an admin block
+                    status = ReservationStatusEnum.ADMIN_BLOCK if username == "admin-block" else ReservationStatusEnum.ACTIVE
+                    
+                    # Create fake user_id for migration (will be updated on first real use)
+                    user_id = f"migrated_{username}"
+                    
+                    # Create user if not exists
+                    user = user_repo.get_or_create(
+                        user_id=user_id,
+                        username=username
+                    )
+                    session.flush()  # Ensure user is committed
+                    
+                    # Create reservation
+                    reservation = res_repo.create(
+                        user_id=user.user_id,
+                        username=username,
+                        tool_name=tool_name,
+                        start_time=start_time,
+                        end_time=end_time,
+                        original_text=original_text,
+                        formatted_time=time_str,
+                        status=status
+                    )
+                    
+                    reservations_migrated += 1
+                    logger.info(f"Migrated reservation: {username} on {tool_name} - {time_str}")
+                    
+                except Exception as e:
+                    logger.error(f"Error migrating reservation {res}: {e}")
+                    errors += 1
     
     logger.info(f"Migration complete: {tools_migrated} tools, {reservations_migrated} reservations")
     if errors:
@@ -123,10 +187,9 @@ def migrate_history_csv():
     """Migrate reservation history from history.csv"""
     logger.info("Starting migration of reservation history...")
     
-    config = get_config()
-    history_file = config.history_file
+    history_file = get_history_file()
+    logger.info(f"Using history file: {history_file}")
     
-    import os
     if not os.path.exists(history_file):
         logger.info(f"No history file found at {history_file}")
         return
@@ -175,8 +238,13 @@ def migrate_history_csv():
                         session.flush()  # Ensure tool is committed before moving on
                         
                         # Create history record directly
-                        from database import ReservationHistoryModel
                         from time_utils import calculate_duration_hours
+                        
+                        # Determine status - historical records should be RETURNED (normal) or EXPIRED (admin-block)
+                        if username == "admin-block":
+                            status = ReservationStatusEnum.EXPIRED
+                        else:
+                            status = ReservationStatusEnum.RETURNED
                         
                         history = ReservationHistoryModel(
                             user_id=user.user_id,
@@ -187,7 +255,7 @@ def migrate_history_csv():
                             end_time=end_time,
                             original_text=time_str,
                             formatted_time=time_str,
-                            status=ReservationStatusEnum.EXPIRED,
+                            status=status,
                             duration_hours=calculate_duration_hours(start_time, end_time),
                             created_at=start_time,
                             archived_at=archived_at
@@ -209,8 +277,54 @@ def migrate_history_csv():
         logger.warning(f"Encountered {errors} errors during history migration")
 
 
+def sync_statistics():
+    """Sync user and tool statistics from history data"""
+    logger.info("Syncing user and tool statistics...")
+    
+    try:
+        # Import the sync functions from the scripts directory
+        import importlib.util
+        sync_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts', 'sync_user_statistics.py')
+        
+        if os.path.exists(sync_script):
+            spec = importlib.util.spec_from_file_location("sync_user_statistics", sync_script)
+            sync_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sync_module)
+            
+            # Run the sync
+            sync_module.main()
+            logger.info("✓ Statistics synced successfully")
+        else:
+            logger.warning(f"Sync script not found at {sync_script}")
+            logger.info("You can run 'python scripts/sync_user_statistics.py' manually to sync statistics")
+    except Exception as e:
+        logger.warning(f"Could not auto-sync statistics: {e}")
+        logger.info("Run 'python scripts/sync_user_statistics.py' manually to sync statistics")
+
+
 def main():
     """Run the full migration"""
+    global USE_ARCHIVE, CUSTOM_PATH
+    
+    # Parse command line arguments
+    if '--archive' in sys.argv:
+        USE_ARCHIVE = True
+        logger.info("Using archive directory for source files")
+    
+    # Check for --path argument
+    for i, arg in enumerate(sys.argv):
+        if arg == '--path' and i + 1 < len(sys.argv):
+            CUSTOM_PATH = sys.argv[i + 1]
+            logger.info(f"Using custom path for source files: {CUSTOM_PATH}")
+            break
+    
+    if not CUSTOM_PATH and not USE_ARCHIVE:
+        # Auto-detect archive directory
+        archive_dir = os.path.join(BASE_DIR, 'archive')
+        if os.path.exists(archive_dir):
+            USE_ARCHIVE = True
+            logger.info("Auto-detected archive directory, using it for source files")
+    
     logger.info("=" * 60)
     logger.info("Starting database migration")
     logger.info("=" * 60)
@@ -232,7 +346,7 @@ def main():
         new_tables = ['tool_signout_limits', 'consecutive_signout_tracker', 'consecutive_signout_exemptions']
         for table in new_tables:
             if table in tables:
-                logger.info(f"✓ New table created: {table}")
+                logger.info(f"✓ Table exists: {table}")
             else:
                 logger.warning(f"⚠ Table not found: {table}")
         
@@ -254,22 +368,31 @@ def main():
         # Migrate history
         migrate_history_csv()
         
+        # Sync statistics after migration
+        sync_statistics()
+        
         logger.info("=" * 60)
         logger.info("Migration completed successfully!")
         logger.info("=" * 60)
+        logger.info("")
         logger.info("IMPORTANT: Verify the migration before deleting JSON/CSV files")
         logger.info("")
-        logger.info("New features available:")
+        logger.info("Verification commands:")
+        logger.info("  • Check tools: psql -h <host> -d signout_bot -c 'SELECT * FROM tools;'")
+        logger.info("  • Check history: psql -h <host> -d signout_bot -c 'SELECT COUNT(*) FROM reservation_history;'")
+        logger.info("  • Check users: psql -h <host> -d signout_bot -c 'SELECT * FROM users;'")
+        logger.info("")
+        logger.info("Features available:")
         logger.info("  • Consecutive signout limits per tool")
         logger.info("  • User exemptions from limits")
-        logger.info("  • Cooldown tracking")
+        logger.info("  • Cooldown tracking with time-based reset")
         logger.info("  • Role-based permissions for tools")
         logger.info("")
         logger.info("Next steps:")
         logger.info("  1. Use /setresignoutlimit in tool channels to configure limits")
         logger.info("  2. Run /syncroles to create Discord roles for all tools")
         logger.info("  3. Use /togglerole to enable role requirements per tool")
-        logger.info("  4. See ROLE_BASED_PERMISSIONS.md for complete documentation")
+        logger.info("  4. See docs/ROLE_BASED_PERMISSIONS.md for complete documentation")
         
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
