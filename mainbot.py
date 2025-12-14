@@ -65,21 +65,21 @@ async def clean_expired_signouts():
             res_repo = ReservationRepository(session)
             history_repo = ReservationHistoryRepository(session)
             
-            # Get all expired reservations
+            # Get all expired reservations (including ADMIN_BLOCK)
             expired = res_repo.get_expired_reservations(now_naive)
             
             if expired:
                 logger.info(f"Found {len(expired)} expired reservations to archive")
                 
                 for reservation in expired:
-                    # Archive to history
+                    # Archive to history (preserves is_admin_block flag)
                     history_repo.archive_reservation(reservation)
                     
-                    # Update status to expired
-                    reservation.status = ReservationStatusEnum.EXPIRED
-                    reservation.updated_at = datetime.now(timezone.utc)
+                    # Delete from reservations table (history has the copy)
+                    session.delete(reservation)
                     
-                    logger.info(f"Archived expired reservation: {reservation.username} - {reservation.tool_name}")
+                    res_type = "admin block" if reservation.status == ReservationStatusEnum.ADMIN_BLOCK else "reservation"
+                    logger.info(f"Archived and removed expired {res_type}: {reservation.username} - {reservation.tool_name}")
                 
                 session.commit()
                 logger.info("Expired signouts cleaned successfully")
@@ -1157,10 +1157,6 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
         # Archive to history
         history_repo.archive_reservation(res)
         
-        # Mark as cancelled
-        res.status = ReservationStatusEnum.CANCELLED
-        res.updated_at = datetime.now(timezone.utc)
-        
         # Decrement consecutive count since they cancelled (shouldn't count against them)
         from repositories import ConsecutiveSignoutRepository
         consecutive_repo = ConsecutiveSignoutRepository(session)
@@ -1170,6 +1166,8 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
             tracker.updated_at = datetime.now(timezone.utc)
             logger.info(f"Decremented consecutive count for {res.username} on {tool_name} due to cancellation")
         
+        # Delete from reservations table (history has the copy)
+        session.delete(res)
         session.commit()
         
         await interaction.response.send_message(
@@ -1233,11 +1231,8 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
         # Archive to history
         history_repo.archive_reservation(res)
         
-        # Mark as returned
-        res.status = ReservationStatusEnum.RETURNED
-        res.returned_at = datetime.utcnow()
-        res.updated_at = datetime.utcnow()
-        
+        # Delete from reservations table (history has the copy)
+        session.delete(res)
         session.commit()
         
         # Prepare response

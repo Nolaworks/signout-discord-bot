@@ -471,11 +471,10 @@ class AdminPanel(commands.Cog):
                 )
                 return
             
-            # Archive and cancel each reservation
+            # Archive and delete each reservation
             for res in reservations:
                 history_repo.archive_reservation(res)
-                res.status = ReservationStatusEnum.CANCELLED
-                res.updated_at = datetime.utcnow()
+                session.delete(res)
             
             session.commit()
             
@@ -511,11 +510,9 @@ class AdminPanel(commands.Cog):
             
             res = reservations[0]
             
-            # Archive and return
+            # Archive and delete
             history_repo.archive_reservation(res)
-            res.status = ReservationStatusEnum.RETURNED
-            res.returned_at = datetime.utcnow()
-            res.updated_at = datetime.utcnow()
+            session.delete(res)
             
             session.commit()
             

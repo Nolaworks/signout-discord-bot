@@ -157,6 +157,7 @@ class ReservationHistoryModel(Base):
     
     # Status and metadata
     status = Column(SQLEnum(ReservationStatusEnum), nullable=False, index=True)
+    is_admin_block = Column(Boolean, default=False, nullable=False, index=True)
     photo_url = Column(Text)
     duration_hours = Column(Float, nullable=False)
     

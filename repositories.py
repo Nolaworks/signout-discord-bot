@@ -225,10 +225,13 @@ class ReservationRepository:
         ).first()
     
     def get_expired_reservations(self, now: datetime) -> List[ReservationModel]:
-        """Get all expired reservations"""
+        """Get all expired reservations (including ADMIN_BLOCK)"""
         return self.session.query(ReservationModel).filter(
             and_(
-                ReservationModel.status == ReservationStatusEnum.ACTIVE,
+                or_(
+                    ReservationModel.status == ReservationStatusEnum.ACTIVE,
+                    ReservationModel.status == ReservationStatusEnum.ADMIN_BLOCK
+                ),
                 ReservationModel.end_time <= now
             )
         ).all()
@@ -319,6 +322,7 @@ class ReservationHistoryRepository:
             original_text=reservation.original_text,
             formatted_time=reservation.formatted_time,
             status=reservation.status,
+            is_admin_block=(reservation.status == ReservationStatusEnum.ADMIN_BLOCK),
             photo_url=reservation.photo_url,
             duration_hours=reservation.duration_hours,
             created_at=reservation.created_at,
