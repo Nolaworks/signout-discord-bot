@@ -8,9 +8,13 @@ This script handles:
 - Statistics sync after migration
 
 Usage:
-    python migrate_to_db.py [--archive]
+    python migrate_to_db.py [options]
     
-    --archive: Use archive/ directory for source files (default if archive exists)
+Options:
+    --path <dir>    Use specified directory for source files
+    --archive       Use archive/ directory for source files (default if exists)
+    --reset         Clear all database tables before migration (DESTRUCTIVE!)
+    --help          Show this help message
 """
 import csv
 import json
@@ -40,6 +44,7 @@ logger = logging.getLogger(__name__)
 # Will be set by main() based on args
 USE_ARCHIVE = False
 CUSTOM_PATH = None  # Custom directory path for source files
+RESET_DB = False  # Whether to clear database before migration
 
 # Base directory for the project
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -277,6 +282,45 @@ def migrate_history_csv():
         logger.warning(f"Encountered {errors} errors during history migration")
 
 
+def reset_database():
+    """Clear all data from database tables (DESTRUCTIVE!)"""
+    logger.warning("=" * 60)
+    logger.warning("RESETTING DATABASE - ALL DATA WILL BE DELETED!")
+    logger.warning("=" * 60)
+    
+    from database import (
+        UserModel, ToolModel, ReservationModel, ReservationHistoryModel,
+        ToolStatisticsModel, UserStatisticsModel, UserToolStatisticsModel,
+        ToolSignoutLimitModel, ConsecutiveSignoutTracker, ConsecutiveSignoutExemption
+    )
+    
+    with get_db_session() as session:
+        # Delete in order to respect foreign key constraints
+        tables_to_clear = [
+            ('consecutive_signout_exemptions', ConsecutiveSignoutExemption),
+            ('consecutive_signout_tracker', ConsecutiveSignoutTracker),
+            ('tool_signout_limits', ToolSignoutLimitModel),
+            ('user_tool_statistics', UserToolStatisticsModel),
+            ('user_statistics', UserStatisticsModel),
+            ('tool_statistics', ToolStatisticsModel),
+            ('reservation_history', ReservationHistoryModel),
+            ('reservations', ReservationModel),
+            ('tools', ToolModel),
+            ('users', UserModel),
+        ]
+        
+        for table_name, model in tables_to_clear:
+            try:
+                count = session.query(model).delete()
+                logger.info(f"  Deleted {count} records from {table_name}")
+            except Exception as e:
+                logger.warning(f"  Could not clear {table_name}: {e}")
+        
+        session.commit()
+    
+    logger.info("✓ Database reset complete")
+
+
 def sync_statistics():
     """Sync user and tool statistics from history data"""
     logger.info("Syncing user and tool statistics...")
@@ -302,14 +346,28 @@ def sync_statistics():
         logger.info("Run 'python scripts/sync_user_statistics.py' manually to sync statistics")
 
 
+def show_help():
+    """Display help message"""
+    print(__doc__)
+    sys.exit(0)
+
+
 def main():
     """Run the full migration"""
-    global USE_ARCHIVE, CUSTOM_PATH
+    global USE_ARCHIVE, CUSTOM_PATH, RESET_DB
+    
+    # Check for help
+    if '--help' in sys.argv or '-h' in sys.argv:
+        show_help()
     
     # Parse command line arguments
     if '--archive' in sys.argv:
         USE_ARCHIVE = True
         logger.info("Using archive directory for source files")
+    
+    if '--reset' in sys.argv:
+        RESET_DB = True
+        logger.warning("Database will be reset before migration!")
     
     # Check for --path argument
     for i, arg in enumerate(sys.argv):
@@ -334,6 +392,10 @@ def main():
         logger.info("Initializing database schema...")
         init_database()
         logger.info("✓ Database schema initialized")
+        
+        # Reset database if requested
+        if RESET_DB:
+            reset_database()
         
         # Verify new tables were created
         from sqlalchemy import create_engine, inspect

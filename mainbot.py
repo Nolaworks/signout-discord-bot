@@ -1009,8 +1009,8 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         tool_repo = ToolRepository(session)
         res_repo = ReservationRepository(session)
         
-        # Get or create user
-        user = user_repo.get_or_create(user_id, username, display_name, is_admin)
+        # Get or create user (merges migrated users on first use)
+        user = user_repo.merge_migrated_user(user_id, username, display_name, is_admin)
         
         # Get or create tool
         tool = tool_repo.get_or_create(

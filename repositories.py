@@ -59,6 +59,55 @@ class UserRepository:
         """Get user by username"""
         return self.session.query(UserModel).filter_by(username=username).first()
     
+    def get_migrated_user(self, username: str) -> Optional[UserModel]:
+        """Get a migrated user by username (user_id starts with 'migrated_')"""
+        migrated_id = f"migrated_{username}"
+        return self.session.query(UserModel).filter_by(user_id=migrated_id).first()
+    
+    def merge_migrated_user(self, real_user_id: str, username: str, 
+                            display_name: Optional[str] = None,
+                            is_admin: bool = False) -> UserModel:
+        """
+        Merge a migrated user with their real Discord ID.
+        Updates the migrated user's user_id to the real Discord ID,
+        preserving all their history and statistics.
+        
+        If no migrated user exists, creates a new user.
+        If the real user already exists, returns that user.
+        """
+        # First check if real user already exists
+        real_user = self.get_by_user_id(real_user_id)
+        if real_user:
+            # Update last seen and return
+            real_user.last_seen_at = datetime.utcnow()
+            if display_name:
+                real_user.display_name = display_name
+            return real_user
+        
+        # Check for migrated user
+        migrated_user = self.get_migrated_user(username)
+        if migrated_user:
+            # Update the migrated user with real Discord ID
+            logger.info(f"Merging migrated user {migrated_user.user_id} -> {real_user_id}")
+            migrated_user.user_id = real_user_id
+            migrated_user.username = username
+            if display_name:
+                migrated_user.display_name = display_name
+            migrated_user.is_admin = is_admin
+            migrated_user.last_seen_at = datetime.utcnow()
+            migrated_user.updated_at = datetime.utcnow()
+            
+            # Also update any history records that reference the migrated user_id
+            from database import ReservationHistoryModel
+            self.session.query(ReservationHistoryModel).filter_by(
+                user_id=f"migrated_{username}"
+            ).update({"user_id": real_user_id})
+            
+            return migrated_user
+        
+        # No migrated user, create new
+        return self.get_or_create(real_user_id, username, display_name, is_admin)
+    
     def update_statistics(self, user_id: str, total_reservations: int, 
                          total_time_hours: float):
         """Update user statistics"""
