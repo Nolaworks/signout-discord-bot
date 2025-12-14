@@ -1241,7 +1241,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         if not is_admin:
             from repositories import ConsecutiveSignoutRepository
             consecutive_repo = ConsecutiveSignoutRepository(session)
-            consecutive_repo.increment_consecutive(user_id, username, tool.id, tool_name, end_time, duration_hours)
+            consecutive_repo.increment_consecutive(user_id, username, tool.id, tool_name, end_time, duration)
         
         session.commit()
         
