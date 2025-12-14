@@ -12,8 +12,12 @@ Example cron entry (runs nightly at 03:00):
 """
 import argparse
 import sys
+import os
 import logging
 from sqlalchemy import func, desc
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db_session import get_db_session
 from database import UserModel, ReservationModel, ReservationHistoryModel, UserStatisticsModel, UserToolStatisticsModel, ToolModel
@@ -138,6 +142,11 @@ def compute_for_user(session, user: UserModel, apply: bool = False):
                 us.most_used_tool_id = None
                 us.most_used_tool_name = None
                 us.most_used_tool_count = 0
+    
+    # Also update the users table to match
+    if apply:
+        user.total_reservations = total_reservations
+        user.total_time_hours = total_hours
 
     return {
         'user_id': user_id,

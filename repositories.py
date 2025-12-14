@@ -236,6 +236,15 @@ class ReservationRepository:
             )
         ).all()
     
+    def get_non_active_reservations(self) -> List[ReservationModel]:
+        """Get all reservations that are not ACTIVE or ADMIN_BLOCK (ready to archive)"""
+        return self.session.query(ReservationModel).filter(
+            and_(
+                ReservationModel.status != ReservationStatusEnum.ACTIVE,
+                ReservationModel.status != ReservationStatusEnum.ADMIN_BLOCK
+            )
+        ).all()
+    
     def mark_returned(self, reservation_id: int, returned_at: Optional[datetime] = None) -> bool:
         """Mark reservation as returned"""
         reservation = self.session.query(ReservationModel).get(reservation_id)

@@ -55,7 +55,7 @@ notification_manager = None
 
 @tasks.loop(minutes=config.cleanup_interval_minutes)
 async def clean_expired_signouts():
-    """Background task to clean up expired reservations"""
+    """Background task to mark expired reservations and archive non-ACTIVE ones"""
     try:
         now = get_now(CENTRAL_TZ)
         # Convert to naive for database comparison
@@ -65,24 +65,31 @@ async def clean_expired_signouts():
             res_repo = ReservationRepository(session)
             history_repo = ReservationHistoryRepository(session)
             
-            # Get all expired reservations (including ADMIN_BLOCK)
+            # Step 1: Mark expired reservations (ACTIVE/ADMIN_BLOCK past their end_time)
             expired = res_repo.get_expired_reservations(now_naive)
-            
             if expired:
-                logger.info(f"Found {len(expired)} expired reservations to archive")
-                
+                logger.info(f"Marking {len(expired)} reservations as EXPIRED")
                 for reservation in expired:
-                    # Archive to history (preserves is_admin_block flag)
+                    old_status = reservation.status
+                    reservation.status = ReservationStatusEnum.EXPIRED
+                    logger.info(f"Marked as expired: {reservation.username} - {reservation.tool_name} (was {old_status.value})")
+                session.commit()
+            
+            # Step 2: Archive and delete all non-ACTIVE reservations
+            non_active = res_repo.get_non_active_reservations()
+            if non_active:
+                logger.info(f"Archiving {len(non_active)} non-active reservations")
+                for reservation in non_active:
+                    # Archive to history (with current status: EXPIRED, CANCELLED, RETURNED)
                     history_repo.archive_reservation(reservation)
                     
-                    # Delete from reservations table (history has the copy)
+                    # Delete from reservations table
                     session.delete(reservation)
                     
-                    res_type = "admin block" if reservation.status == ReservationStatusEnum.ADMIN_BLOCK else "reservation"
-                    logger.info(f"Archived and removed expired {res_type}: {reservation.username} - {reservation.tool_name}")
+                    logger.info(f"Archived {reservation.status.value}: {reservation.username} - {reservation.tool_name}")
                 
                 session.commit()
-                logger.info("Expired signouts cleaned successfully")
+                logger.info("Cleanup completed successfully")
     except Exception as e:
         logger.error(f"Error cleaning expired signouts: {e}", exc_info=True)
 
@@ -1154,8 +1161,8 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
             )
             return
         
-        # Archive to history
-        history_repo.archive_reservation(res)
+        # Mark as CANCELLED (cleanup task will archive it)
+        res.status = ReservationStatusEnum.CANCELLED
         
         # Decrement consecutive count since they cancelled (shouldn't count against them)
         from repositories import ConsecutiveSignoutRepository
@@ -1166,8 +1173,6 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
             tracker.updated_at = datetime.now(timezone.utc)
             logger.info(f"Decremented consecutive count for {res.username} on {tool_name} due to cancellation")
         
-        # Delete from reservations table (history has the copy)
-        session.delete(res)
         session.commit()
         
         await interaction.response.send_message(
@@ -1228,11 +1233,9 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
             )
             return
         
-        # Archive to history
-        history_repo.archive_reservation(res)
-        
-        # Delete from reservations table (history has the copy)
-        session.delete(res)
+        # Mark as RETURNED (cleanup task will archive it)
+        res.status = ReservationStatusEnum.RETURNED
+        res.returned_at = datetime.utcnow()
         session.commit()
         
         # Prepare response

@@ -471,10 +471,9 @@ class AdminPanel(commands.Cog):
                 )
                 return
             
-            # Archive and delete each reservation
+            # Mark all as CANCELLED (cleanup task will archive them)
             for res in reservations:
-                history_repo.archive_reservation(res)
-                session.delete(res)
+                res.status = ReservationStatusEnum.CANCELLED
             
             session.commit()
             
@@ -510,9 +509,9 @@ class AdminPanel(commands.Cog):
             
             res = reservations[0]
             
-            # Archive and delete
-            history_repo.archive_reservation(res)
-            session.delete(res)
+            # Mark as RETURNED (cleanup task will archive it)
+            res.status = ReservationStatusEnum.RETURNED
+            res.returned_at = datetime.utcnow()
             
             session.commit()
             
@@ -605,7 +604,6 @@ class AdminPanel(commands.Cog):
             
             # Handle cancel
             if new_value.lower() == "cancel":
-                history_repo.archive_reservation(res)
                 res.status = ReservationStatusEnum.CANCELLED
                 res.updated_at = datetime.utcnow()
                 session.commit()
@@ -676,9 +674,8 @@ class AdminPanel(commands.Cog):
                     if conflict.end_time > new_end:
                         new_end = conflict.end_time
                     
-                    # Archive and remove the conflicting reservation
-                    history_repo.archive_reservation(conflict)
-                    session.delete(conflict)
+                    # Mark as CANCELLED (cleanup task will archive it)
+                    conflict.status = ReservationStatusEnum.CANCELLED
                 
                 new_range = f"{format_datetime(new_start)} to {format_datetime(new_end)}"
             
@@ -845,9 +842,8 @@ class AdminPanel(commands.Cog):
                             conflict.formatted_time = f"{format_datetime(block_end)} to {format_datetime(conflict.end_time)}"
                             conflict.duration_hours = calculate_duration_hours(block_end, conflict.end_time)
                         else:
-                            # Fully within block - cancel
-                            history_repo.archive_reservation(conflict)
-                            session.delete(conflict)
+                            # Fully within block - mark as CANCELLED
+                            conflict.status = ReservationStatusEnum.CANCELLED
                     
                     modified.append(tool_item.name)
                 
