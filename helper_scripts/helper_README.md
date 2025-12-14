@@ -53,7 +53,7 @@ python3 helper_scripts/migrate_to_db.py
 
 ### `../scripts/sync_user_statistics.py`
 
-Recalculate and sync statistics from history data.
+Recalculate and sync statistics from reservation history data.
 
 **Usage:**
 ```bash
@@ -62,12 +62,25 @@ python3 scripts/sync_user_statistics.py
 
 # Apply changes
 python3 scripts/sync_user_statistics.py --apply
+
+# Sync single user only
+python3 scripts/sync_user_statistics.py --apply --user USER_ID
 ```
 
 **What it syncs:**
-- User statistics (total reservations, hours, most-used tool)
-- Tool statistics (total reservations, hours, most frequent user)
-- Updates both statistics tables and main user/tool tables
+
+| Table | Fields Updated |
+|-------|----------------|
+| `users` | `total_reservations`, `total_time_hours` |
+| `user_statistics` | `active_reservations`, `total_reservations`, `total_hours_reserved`, `average_duration_hours`, `most_used_tool_*` |
+| `user_tool_statistics` | Per-tool reservation counts and hours for each user |
+| `tools` | `total_reservations`, `total_time_hours` |
+| `tool_statistics` | `active_reservations`, `total_reservations`, `total_hours_reserved`, `average_duration_hours`, `most_frequent_user_*` |
+
+**What it does NOT sync:**
+- `is_admin` field - Determined in real-time from Discord roles
+- Tool role assignments - Managed via `/admin role` commands
+- Consecutive signout counters - Tracked separately during reservations
 
 ---
 
