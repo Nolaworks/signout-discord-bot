@@ -3,8 +3,8 @@ Migration script to transfer data from JSON/CSV files to PostgreSQL database.
 Run this once to migrate existing data from production.
 
 This script handles:
-- Tools from archive/tools.json or tools.json
-- History from archive/history.csv or history.csv
+- Tools from archive/current_prod/tools.json or tools.json
+- History from archive/current_prod/history.csv or history.csv
 - Statistics sync after migration
 
 Usage:
@@ -12,7 +12,7 @@ Usage:
     
 Options:
     --path <dir>    Use specified directory for source files
-    --archive       Use archive/ directory for source files (default if exists)
+    --archive       Use archive/current_prod directory for source files (default if exists)
     --reset         Clear all database tables before migration (DESTRUCTIVE!)
     --help          Show this help message
 """
@@ -21,11 +21,15 @@ import json
 import logging
 import os
 import sys
+import asyncio
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import discord
+from discord.ext import commands
 
 from db_session import get_db_session, init_database
 from repositories import (
@@ -49,6 +53,9 @@ RESET_DB = False  # Whether to clear database before migration
 # Base directory for the project
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Tool room tools will be determined by querying Discord
+TOOL_ROOM_TOOLS: Set[str] = set()
+
 
 def get_tools_file() -> str:
     """Get path to tools.json, checking custom path or archive first"""
@@ -57,7 +64,7 @@ def get_tools_file() -> str:
         if os.path.exists(custom_file):
             return custom_file
     if USE_ARCHIVE:
-        archive_path = os.path.join(BASE_DIR, 'archive', 'tools.json')
+        archive_path = os.path.join(BASE_DIR, 'archive/current_prod', 'tools.json')
         if os.path.exists(archive_path):
             return archive_path
     return os.path.join(BASE_DIR, 'tools.json')
@@ -70,10 +77,73 @@ def get_history_file() -> str:
         if os.path.exists(custom_file):
             return custom_file
     if USE_ARCHIVE:
-        archive_path = os.path.join(BASE_DIR, 'archive', 'history.csv')
+        archive_path = os.path.join(BASE_DIR, 'archive/current_prod', 'history.csv')
         if os.path.exists(archive_path):
             return archive_path
     return os.path.join(BASE_DIR, 'history.csv')
+
+
+async def fetch_tool_room_channels() -> Set[str]:
+    """Query Discord to get all channels in the Tool Room category"""
+    global TOOL_ROOM_TOOLS
+    
+    config = get_config()
+    intents = discord.Intents.default()
+    bot = commands.Bot(command_prefix='!', intents=intents)
+    
+    tool_room_channels = set()
+    
+    @bot.event
+    async def on_ready():
+        nonlocal tool_room_channels
+        logger.info(f"Connected to Discord as {bot.user}")
+        
+        try:
+            # Get the first guild (assumes bot is only in one guild)
+            guild = bot.guilds[0] if bot.guilds else None
+            if not guild:
+                logger.warning("Bot is not in any guilds")
+                await bot.close()
+                return
+            
+            logger.info(f"Checking guild: {guild.name}")
+            
+            # Find the Tool Room category
+            tool_room_category = None
+            for category in guild.categories:
+                if category.name.lower() == "tool room":
+                    tool_room_category = category
+                    logger.info(f"Found Tool Room category: {category.name}")
+                    break
+            
+            if tool_room_category:
+                # Get all text channels in the Tool Room category
+                for channel in tool_room_category.text_channels:
+                    # Strip "signout-" prefix to match tool names
+                    tool_name = channel.name.replace("signout-", "", 1)
+                    tool_room_channels.add(tool_name)
+                    logger.info(f"  - Tool Room channel: {channel.name} -> {tool_name}")
+            else:
+                logger.warning("Tool Room category not found")
+            
+        except Exception as e:
+            logger.error(f"Error fetching tool room channels: {e}")
+        finally:
+            await bot.close()
+    
+    try:
+        await bot.start(config.discord_token)
+    except Exception as e:
+        logger.error(f"Failed to connect to Discord: {e}")
+    finally:
+        # Ensure proper cleanup
+        if not bot.is_closed():
+            await bot.close()
+        # Give time for cleanup
+        await asyncio.sleep(0.5)
+    
+    TOOL_ROOM_TOOLS = tool_room_channels
+    return tool_room_channels
 
 
 def load_tools_from_file(filepath: str) -> Dict[str, Any]:
@@ -93,16 +163,12 @@ def migrate_tools_and_reservations():
     tools_file = get_tools_file()
     logger.info(f"Using tools file: {tools_file}")
     
-    if not os.path.exists(tools_file):
+    # Load existing data from tools.json (may not exist)
+    data = {"tools": {}}
+    if os.path.exists(tools_file):
+        data = load_tools_from_file(tools_file)
+    else:
         logger.warning(f"No tools file found at {tools_file}")
-        return
-    
-    # Load existing data
-    data = load_tools_from_file(tools_file)
-    
-    if not data.get("tools"):
-        logger.warning("No tools found in tools.json")
-        return
     
     tools_migrated = 0
     reservations_migrated = 0
@@ -113,17 +179,41 @@ def migrate_tools_and_reservations():
         user_repo = UserRepository(session)
         res_repo = ReservationRepository(session)
         
-        # First pass: Create all tools
-        for tool_name, tool_data in data["tools"].items():
+        # First pass: Create all Tool Room tools from Discord query
+        logger.info(f"Creating {len(TOOL_ROOM_TOOLS)} Tool Room tools from Discord...")
+        for tool_name in TOOL_ROOM_TOOLS:
             try:
-                # Create or update tool
+                # Check if this tool is in tools.json
+                tool_data = data.get("tools", {}).get(tool_name, {})
                 max_time = tool_data.get("max_time", 168)
+                
                 tool = tool_repo.get_or_create(
                     name=tool_name,
                     max_time_hours=max_time
                 )
+                tool.is_tool_room = True
+                logger.info(f"Migrated tool from Discord: {tool_name} (Tool Room)")
                 tools_migrated += 1
-                logger.info(f"Migrated tool: {tool_name}")
+            except Exception as e:
+                logger.error(f"Error migrating tool room tool {tool_name}: {e}")
+                errors += 1
+        
+        # Second pass: Create all tools from tools.json (including any not in Tool Room)
+        for tool_name, tool_data in data.get("tools", {}).items():
+            try:
+                # Skip if we already created this as a Tool Room tool
+                if tool_name in TOOL_ROOM_TOOLS:
+                    continue
+                
+                # Create or update tool
+                max_time = tool_data.get("max_time", 168)
+                
+                tool = tool_repo.get_or_create(
+                    name=tool_name,
+                    max_time_hours=max_time
+                )
+                logger.info(f"Migrated tool from JSON: {tool_name}")
+                tools_migrated += 1
             except Exception as e:
                 logger.error(f"Error migrating tool {tool_name}: {e}")
                 errors += 1
@@ -131,8 +221,8 @@ def migrate_tools_and_reservations():
         # Commit tools before creating reservations
         session.flush()
         
-        # Second pass: Create reservations
-        for tool_name, tool_data in data["tools"].items():
+        # Third pass: Create reservations from tools.json
+        for tool_name, tool_data in data.get("tools", {}).items():
             reservations = tool_data.get("reservations", [])
             for res in reservations:
                 try:
@@ -302,7 +392,8 @@ def reset_database():
     from database import (
         UserModel, ToolModel, ReservationModel, ReservationHistoryModel,
         ToolStatisticsModel, UserStatisticsModel, UserToolStatisticsModel,
-        ToolSignoutLimitModel, ConsecutiveSignoutTracker, ConsecutiveSignoutExemption
+        ToolSignoutLimitModel, ConsecutiveSignoutTracker, ConsecutiveSignoutExemption,
+        ReservationPhotoModel, PhotoDebtModel
     )
     
     with get_db_session() as session:
@@ -314,6 +405,8 @@ def reset_database():
             ('user_tool_statistics', UserToolStatisticsModel),
             ('user_statistics', UserStatisticsModel),
             ('tool_statistics', ToolStatisticsModel),
+            ('photo_debts', PhotoDebtModel),
+            ('reservation_photos', ReservationPhotoModel),
             ('reservation_history', ReservationHistoryModel),
             ('reservations', ReservationModel),
             ('tools', ToolModel),
@@ -364,8 +457,8 @@ def show_help():
     sys.exit(0)
 
 
-def main():
-    """Run the full migration"""
+async def async_main():
+    """Async main function to handle Discord queries"""
     global USE_ARCHIVE, CUSTOM_PATH, RESET_DB
     
     # Check for help
@@ -390,7 +483,7 @@ def main():
     
     if not CUSTOM_PATH and not USE_ARCHIVE:
         # Auto-detect archive directory
-        archive_dir = os.path.join(BASE_DIR, 'archive')
+        archive_dir = os.path.join(BASE_DIR, 'archive/current_prod')
         if os.path.exists(archive_dir):
             USE_ARCHIVE = True
             logger.info("Auto-detected archive directory, using it for source files")
@@ -398,6 +491,11 @@ def main():
     logger.info("=" * 60)
     logger.info("Starting database migration")
     logger.info("=" * 60)
+    
+    # Query Discord for Tool Room channels
+    logger.info("Querying Discord for Tool Room category channels...")
+    tool_room_channels = await fetch_tool_room_channels()
+    logger.info(f"Found {len(tool_room_channels)} Tool Room channels")
     
     try:
         # Initialize database (creates all tables including new ones)
@@ -471,6 +569,11 @@ def main():
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
         logger.error("Database may be in an inconsistent state. Review logs and restore from backup if needed.")
+
+
+def main():
+    """Run the full migration (wrapper for async_main)"""
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":
