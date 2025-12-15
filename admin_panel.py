@@ -10,6 +10,7 @@ import pytz
 from collections import deque
 from typing import Optional, List
 from datetime import datetime
+from sqlalchemy import and_
 
 import discord
 from discord import app_commands
@@ -2049,10 +2050,10 @@ class AdminPanel(commands.Cog):
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
     
-    @photo_group.command(name="approve", description="Admin: Approve a photo")
+    @photo_group.command(name="approve", description="Admin: Approve a photo by ID")
     @is_admin_check()
     @app_commands.describe(
-        photo_id="Photo ID to approve",
+        photo_id="Photo ID to approve (from /admin photo view results)",
         notes="Optional notes about the approval"
     )
     async def photo_approve(self, interaction: discord.Interaction, photo_id: int, notes: str = None):
@@ -2098,10 +2099,10 @@ class AdminPanel(commands.Cog):
                     ephemeral=True
                 )
     
-    @photo_group.command(name="reject", description="Admin: Reject a photo")
+    @photo_group.command(name="reject", description="Admin: Reject a photo by ID")
     @is_admin_check()
     @app_commands.describe(
-        photo_id="Photo ID to reject",
+        photo_id="Photo ID to reject (from /admin photo view results)",
         notes="Reason for rejection (shown to user)"
     )
     async def photo_reject(self, interaction: discord.Interaction, photo_id: int, notes: str = None):
@@ -2148,71 +2149,123 @@ class AdminPanel(commands.Cog):
                     ephemeral=True
                 )
     
-    @photo_group.command(name="view", description="Admin: View details of a specific photo")
+    @photo_group.command(name="view", description="Admin: View photos for a user/tool/time range")
     @is_admin_check()
-    @app_commands.describe(photo_id="Photo ID to view")
-    async def photo_view(self, interaction: discord.Interaction, photo_id: int):
-        """View detailed information about a photo"""
+    @app_commands.describe(
+        tool="Tool name",
+        username="Username to search for",
+        timerange="Time range (e.g., 'today', 'last 3 days', 'dec 10 to dec 15')"
+    )
+    async def photo_view(self, interaction: discord.Interaction, tool: str, username: str, timerange: str):
+        """View photos matching the criteria and send via DM"""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        # Parse time range using GPT (historical version allows past dates)
+        from gptparse import parse_historical_time_range
+        from time_utils import parse_time_range, CENTRAL_TZ, get_now
+        
+        formatted_time = await parse_historical_time_range(timerange)
+        
+        if not formatted_time:
+            await interaction.followup.send(
+                f"❌ Could not understand time range: `{timerange}`\n"
+                f"Try: 'today', 'last 3 days', 'dec 10 to dec 15', etc.",
+                ephemeral=True
+            )
+            return
+        
+        try:
+            start_time, end_time = parse_time_range(formatted_time, CENTRAL_TZ)
+            # Convert to naive for database queries
+            start_time = start_time.replace(tzinfo=None)
+            end_time = end_time.replace(tzinfo=None)
+        except Exception as e:
+            logger.error(f"Error parsing time range '{formatted_time}': {e}")
+            await interaction.followup.send(
+                f"❌ Error parsing time range. Please try a different format.",
+                ephemeral=True
+            )
+            return
+        
         with get_db_session() as session:
             from repositories import ReservationPhotoRepository
-            from database import ReservationModel
+            from database import ReservationPhotoModel
+            
             photo_repo = ReservationPhotoRepository(session)
             
-            photo = photo_repo.get_photo_by_id(photo_id)
-            if not photo:
-                await interaction.response.send_message(
-                    f"❌ Photo ID {photo_id} not found",
+            # Query photos matching criteria
+            photos = session.query(ReservationPhotoModel).filter(
+                and_(
+                    ReservationPhotoModel.tool_name == tool,
+                    ReservationPhotoModel.username == username,
+                    ReservationPhotoModel.uploaded_at >= start_time,
+                    ReservationPhotoModel.uploaded_at <= end_time
+                )
+            ).order_by(ReservationPhotoModel.uploaded_at.desc()).all()
+            
+            if not photos:
+                await interaction.followup.send(
+                    f"No photos found for **{username}** on **{tool}** in range `{formatted_time}`",
                     ephemeral=True
                 )
                 return
             
-            # Get reservation info
-            reservation = session.query(ReservationModel).filter_by(id=photo.reservation_id).first()
-            
-            embed = discord.Embed(
-                title=f"📸 Photo ID {photo.id}",
-                color=discord.Color.green() if photo.approved else (
-                    discord.Color.red() if photo.approved is False else discord.Color.orange()
+            # Send photos via DM
+            try:
+                admin_user = await self.bot.fetch_user(interaction.user.id)
+                
+                # Send summary first
+                summary_embed = discord.Embed(
+                    title=f"📸 Photos for {username} - {tool}",
+                    description=f"**Time Range:** {formatted_time}\n**Photos Found:** {len(photos)}",
+                    color=discord.Color.blue()
                 )
-            )
-            
-            embed.add_field(name="Type", value=photo.photo_type.value.upper(), inline=True)
-            embed.add_field(
-                name="Status",
-                value="✅ Approved" if photo.approved else (
-                    "❌ Rejected" if photo.approved is False else "⏳ Pending"
-                ),
-                inline=True
-            )
-            embed.add_field(name="User", value=photo.username, inline=True)
-            embed.add_field(name="Tool", value=photo.tool_name, inline=True)
-            embed.add_field(
-                name="Uploaded",
-                value=photo.uploaded_at.strftime("%m/%d/%Y %I:%M%p"),
-                inline=True
-            )
-            
-            if reservation:
-                embed.add_field(
-                    name="Reservation",
-                    value=f"{reservation.status.value} - {reservation.formatted_time}",
-                    inline=False
+                await admin_user.send(embed=summary_embed)
+                
+                # Send each photo
+                for photo in photos:
+                    photo_type_emoji = "🔧" if photo.photo_type.value == "start" else "✅"
+                    
+                    embed = discord.Embed(
+                        title=f"{photo_type_emoji} {photo.photo_type.value.upper()} Photo",
+                        color=discord.Color.green() if photo.photo_type.value == "start" else discord.Color.blue()
+                    )
+                    embed.add_field(name="User", value=photo.username, inline=True)
+                    embed.add_field(name="Tool", value=photo.tool_name, inline=True)
+                    embed.add_field(name="Uploaded", value=photo.uploaded_at.strftime('%m/%d/%Y %I:%M%p'), inline=True)
+                    embed.add_field(name="Photo ID", value=str(photo.id), inline=True)
+                    embed.add_field(name="Reservation ID", value=str(photo.reservation_id), inline=True)
+                    
+                    if photo.approved is not None:
+                        status = "✅ Approved" if photo.approved else "❌ Rejected"
+                        embed.add_field(name="Status", value=f"{status} by {photo.reviewed_by_username}", inline=False)
+                        if photo.review_notes:
+                            embed.add_field(name="Notes", value=photo.review_notes, inline=False)
+                    else:
+                        embed.add_field(name="Status", value="⏳ Pending Review", inline=False)
+                    
+                    embed.set_image(url=photo.photo_url)
+                    embed.set_footer(text=f"Query: {tool} | {username} | {formatted_time}")
+                    
+                    await admin_user.send(embed=embed)
+                
+                await interaction.followup.send(
+                    f"✅ Sent {len(photos)} photo(s) to your DMs",
+                    ephemeral=True
                 )
-            
-            if photo.reviewed_at:
-                embed.add_field(
-                    name="Reviewed By",
-                    value=f"{photo.reviewed_by_username} on {photo.reviewed_at.strftime('%m/%d/%Y %I:%M%p')}",
-                    inline=False
+                logger.info(f"Admin {interaction.user.name} viewed {len(photos)} photos for {username} - {tool}")
+                
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    f"❌ Cannot send DMs. Please enable DMs from server members.",
+                    ephemeral=True
                 )
-            
-            if photo.review_notes:
-                embed.add_field(name="Review Notes", value=photo.review_notes, inline=False)
-            
-            embed.set_image(url=photo.photo_url)
-            embed.set_footer(text=f"Reservation ID: {photo.reservation_id}")
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            except Exception as e:
+                logger.error(f"Error sending photos via DM: {e}")
+                await interaction.followup.send(
+                    f"❌ Error sending photos: {str(e)}",
+                    ephemeral=True
+                )
     
     @photo_group.command(name="bulkapprove", description="Admin: Approve all pending photos for a reservation")
     @is_admin_check()

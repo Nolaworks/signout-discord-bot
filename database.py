@@ -143,8 +143,7 @@ class ReservationModel(Base):
     tool = relationship("ToolModel", back_populates="reservations",
                        foreign_keys=[tool_id])
     photos = relationship("ReservationPhotoModel", back_populates="reservation",
-                         foreign_keys="ReservationPhotoModel.reservation_id",
-                         cascade="all, delete-orphan")
+                         foreign_keys="ReservationPhotoModel.reservation_id")
     
     __table_args__ = (
         CheckConstraint('end_time > start_time', name='check_end_after_start'),
@@ -162,7 +161,7 @@ class ReservationPhotoModel(Base):
     __tablename__ = "reservation_photos"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    reservation_id = Column(Integer, ForeignKey("reservations.id"), nullable=False, index=True)
+    reservation_id = Column(Integer, ForeignKey("reservations.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Photo metadata
     photo_type = Column(SQLEnum(PhotoTypeEnum, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
