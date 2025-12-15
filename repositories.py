@@ -87,23 +87,61 @@ class UserRepository:
         # Check for migrated user
         migrated_user = self.get_migrated_user(username)
         if migrated_user:
-            # Update the migrated user with real Discord ID
+            # Merge strategy: Create NEW real user with migrated data, then update all FKs, then delete old
             logger.info(f"Merging migrated user {migrated_user.user_id} -> {real_user_id}")
-            migrated_user.user_id = real_user_id
-            migrated_user.username = username
-            if display_name:
-                migrated_user.display_name = display_name
-            migrated_user.is_admin = is_admin
-            migrated_user.last_seen_at = datetime.utcnow()
-            migrated_user.updated_at = datetime.utcnow()
             
-            # Also update any history records that reference the migrated user_id
+            old_user_id = migrated_user.user_id
+            
+            # Step 1: Create the new real user with the migrated user's statistics
+            new_user = UserModel(
+                user_id=real_user_id,
+                username=username,
+                display_name=display_name,
+                is_admin=is_admin,
+                total_reservations=migrated_user.total_reservations,
+                total_time_hours=migrated_user.total_time_hours,
+                created_at=migrated_user.created_at,  # Preserve original creation date
+                last_seen_at=datetime.utcnow()
+            )
+            self.session.add(new_user)
+            self.session.flush()  # Commit new user to DB
+            
+            # Step 2: Update all foreign key references to point to the new user
+            # Update active reservations
+            self.session.query(ReservationModel).filter_by(
+                user_id=old_user_id
+            ).update({"user_id": real_user_id}, synchronize_session=False)
+            
+            # Update reservation history
             from database import ReservationHistoryModel
             self.session.query(ReservationHistoryModel).filter_by(
-                user_id=f"migrated_{username}"
-            ).update({"user_id": real_user_id})
+                user_id=old_user_id
+            ).update({"user_id": real_user_id}, synchronize_session=False)
             
-            return migrated_user
+            # Update photo debts if any
+            try:
+                from database import PhotoDebtModel
+                self.session.query(PhotoDebtModel).filter_by(
+                    user_id=old_user_id
+                ).update({"user_id": real_user_id}, synchronize_session=False)
+            except Exception:
+                pass
+            
+            # Update consecutive signout tracker if any
+            try:
+                self.session.query(ConsecutiveSignoutTracker).filter_by(
+                    user_id=old_user_id
+                ).update({"user_id": real_user_id}, synchronize_session=False)
+            except Exception:
+                pass
+            
+            # Step 3: Delete the old migrated user record
+            self.session.delete(migrated_user)
+            self.session.flush()
+            
+            logger.info(f"Successfully merged migrated user {old_user_id} -> {real_user_id}")
+            
+            return new_user
         
         # No migrated user, create new
         return self.get_or_create(real_user_id, username, display_name, is_admin)

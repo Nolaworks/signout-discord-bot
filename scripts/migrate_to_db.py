@@ -154,14 +154,20 @@ def migrate_tools_and_reservations():
                     # Determine if this is an admin block
                     status = ReservationStatusEnum.ADMIN_BLOCK if username == "admin-block" else ReservationStatusEnum.ACTIVE
                     
-                    # Create fake user_id for migration (will be updated on first real use)
-                    user_id = f"migrated_{username}"
+                    # Check if a real Discord user already exists with this username
+                    existing_user = user_repo.get_by_username(username)
                     
-                    # Create user if not exists
-                    user = user_repo.get_or_create(
-                        user_id=user_id,
-                        username=username
-                    )
+                    if existing_user and not existing_user.user_id.startswith('migrated_'):
+                        # Real user exists - use their ID
+                        user = existing_user
+                        logger.info(f"Found existing user for {username}: {user.user_id}")
+                    else:
+                        # Create migrated user (will be merged on first real use)
+                        user_id = f"migrated_{username}"
+                        user = user_repo.get_or_create(
+                            user_id=user_id,
+                            username=username
+                        )
                     session.flush()  # Ensure user is committed
                     
                     # Create reservation
@@ -231,11 +237,16 @@ def migrate_history_csv():
                         except:
                             archived_at = datetime.now(CENTRAL_TZ)
                         
-                        # Create fake user_id
-                        user_id = f"migrated_{username}"
+                        # Check if a real Discord user already exists with this username
+                        existing_user = user_repo.get_by_username(username)
                         
-                        # Ensure user exists
-                        user = user_repo.get_or_create(user_id=user_id, username=username)
+                        if existing_user and not existing_user.user_id.startswith('migrated_'):
+                            # Real user exists - use their ID
+                            user = existing_user
+                        else:
+                            # Create migrated user (will be merged on first real use)
+                            user_id = f"migrated_{username}"
+                            user = user_repo.get_or_create(user_id=user_id, username=username)
                         session.flush()  # Ensure user is committed before moving on
                         
                         # Ensure tool exists
@@ -326,24 +337,25 @@ def sync_statistics():
     logger.info("Syncing user and tool statistics...")
     
     try:
-        # Import the sync functions from the scripts directory
+        # Import the sync functions from the scripts directory (same directory as this script)
         import importlib.util
-        sync_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts', 'sync_user_statistics.py')
+        current_script_dir = os.path.dirname(os.path.abspath(__file__))
+        sync_script = os.path.join(current_script_dir, 'sync_user_statistics.py')
         
         if os.path.exists(sync_script):
             spec = importlib.util.spec_from_file_location("sync_user_statistics", sync_script)
             sync_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(sync_module)
             
-            # Run the sync
-            sync_module.main()
+            # Run the sync with --apply flag
+            sync_module.main(['--apply'])
             logger.info("✓ Statistics synced successfully")
         else:
             logger.warning(f"Sync script not found at {sync_script}")
-            logger.info("You can run 'python scripts/sync_user_statistics.py' manually to sync statistics")
+            logger.info("You can run 'python scripts/sync_user_statistics.py --apply' manually to sync statistics")
     except Exception as e:
         logger.warning(f"Could not auto-sync statistics: {e}")
-        logger.info("Run 'python scripts/sync_user_statistics.py' manually to sync statistics")
+        logger.info("Run 'python scripts/sync_user_statistics.py --apply' manually to sync statistics")
 
 
 def show_help():

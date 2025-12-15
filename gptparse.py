@@ -95,7 +95,7 @@ Friday, Fri
 Saturday, Sat  
 Sunday, Sun
 
-Also accept "tomorrow", "tom", and "next [weekday]".
+Also accept "tomorrow", "tom", "tmo" and "next [weekday]".
 
 Always resolve to the next future occurrence.
 
