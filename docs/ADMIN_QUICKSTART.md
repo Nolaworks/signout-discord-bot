@@ -479,4 +479,3 @@ All commands organized by function:
 - `/debug logs tail/level/watch`
 - `/mystats user:<name>`
 
-**Legacy commands still work:** `/addtool`, `/removetool`, `/maxtime`, `/adblock`, `/listblocks`, etc.
