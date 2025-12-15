@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 
 from database import (
     NotificationPreferencesModel, WaitlistModel, NotificationLogModel,
@@ -101,7 +102,8 @@ class NotificationManager:
             
             # Check if photo is required but missing
             photo_warning = ""
-            if reservation.photo_required and not reservation.photo_url:
+            start_photos = [p for p in reservation.photos if p.photo_type.value == 'start']
+            if reservation.photo_required and not start_photos:
                 photo_warning = (
                     "\n\n**IMPORTANT: Photo Required**\n"
                     "This Tool Room reservation requires a photo. You must send a photo of the tool "
@@ -119,8 +121,9 @@ class NotificationManager:
             embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
             embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
             
-            if reservation.photo_url:
-                embed.set_thumbnail(url=reservation.photo_url)
+            # Use first start photo if available
+            if start_photos:
+                embed.set_thumbnail(url=start_photos[0].photo_url)
             
             embed.set_footer(text="Use /returntool when you're done | /notifyprefs to adjust settings")
             
@@ -218,8 +221,9 @@ class NotificationManager:
                 inline=False
             )
             
-            if reservation.photo_url:
-                embed.set_thumbnail(url=reservation.photo_url)
+            # Use first available photo
+            if reservation.photos:
+                embed.set_thumbnail(url=reservation.photos[0].photo_url)
             
             embed.set_footer(text="Use /returntool to return early | /adjusttime to extend")
             
@@ -467,12 +471,23 @@ class NotificationManager:
         cancellations = 0
         
         # Find active reservations that are photo_required and past start time
-        active_reservations = session.query(ReservationModel).filter(
+        # Join with photos to check for start photos
+        from database import ReservationPhotoModel, PhotoTypeEnum
+        
+        active_reservations_query = session.query(ReservationModel).outerjoin(
+            ReservationPhotoModel,
+            and_(
+                ReservationPhotoModel.reservation_id == ReservationModel.id,
+                ReservationPhotoModel.photo_type == PhotoTypeEnum.START
+            )
+        ).filter(
             ReservationModel.status == ReservationStatusEnum.ACTIVE,
             ReservationModel.photo_required == True,
-            ReservationModel.photo_url.is_(None),
+            ReservationPhotoModel.id.is_(None),  # No start photo exists
             ReservationModel.start_time <= now.replace(tzinfo=None)
-        ).all()
+        )
+        
+        active_reservations = active_reservations_query.all()
         
         for reservation in active_reservations:
             start_time_aware = CENTRAL_TZ.localize(reservation.start_time)

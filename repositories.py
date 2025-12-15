@@ -12,9 +12,9 @@ from database import (
     UserModel, ToolModel, ReservationModel, ReservationHistoryModel,
     ToolStatisticsModel, UserStatisticsModel, UserToolStatisticsModel,
     ReservationStatusEnum, ToolSignoutLimitModel, ConsecutiveSignoutTracker,
-    ConsecutiveSignoutExemption
+    ConsecutiveSignoutExemption, ReservationPhotoModel, PhotoTypeEnum
 )
-from models import User, Tool, Reservation, ReservationHistory
+from models import User, Tool, Reservation, ReservationHistory, ReservationPhoto, PhotoType
 from time_utils import calculate_duration_hours
 
 logger = logging.getLogger(__name__)
@@ -135,6 +135,33 @@ class UserRepository:
             except Exception:
                 pass
             
+            # Update user statistics if any
+            try:
+                from database import UserStatisticsModel
+                self.session.query(UserStatisticsModel).filter_by(
+                    user_id=old_user_id
+                ).update({"user_id": real_user_id}, synchronize_session=False)
+            except Exception:
+                pass
+            
+            # Update user tool statistics if any
+            try:
+                from database import UserToolStatisticsModel
+                self.session.query(UserToolStatisticsModel).filter_by(
+                    user_id=old_user_id
+                ).update({"user_id": real_user_id}, synchronize_session=False)
+            except Exception:
+                pass
+            
+            # Update reservation photos if any
+            try:
+                from database import ReservationPhotoModel
+                self.session.query(ReservationPhotoModel).filter_by(
+                    user_id=old_user_id
+                ).update({"user_id": real_user_id}, synchronize_session=False)
+            except Exception:
+                pass
+            
             # Step 3: Delete the old migrated user record
             self.session.delete(migrated_user)
             self.session.flush()
@@ -244,7 +271,6 @@ class ReservationRepository:
     def create(self, user_id: str, username: str, tool_name: str,
               start_time: datetime, end_time: datetime,
               original_text: str, formatted_time: str,
-              photo_url: Optional[str] = None,
               status: ReservationStatusEnum = ReservationStatusEnum.ACTIVE,
               photo_required: bool = False) -> ReservationModel:
         """Create a new reservation"""
@@ -268,7 +294,6 @@ class ReservationRepository:
             end_time=end_time_naive,
             original_text=original_text,
             formatted_time=formatted_time,
-            photo_url=photo_url,
             status=status,
             duration_hours=duration,
             photo_required=photo_required
@@ -410,9 +435,20 @@ class ReservationHistoryRepository:
     def archive_reservation(self, reservation: ReservationModel) -> ReservationHistoryModel:
         """Archive a reservation to history"""
         from database import ReservationStatusEnum
+        import json
         
         # Get status value
         status_value = reservation.status.value if isinstance(reservation.status, ReservationStatusEnum) else reservation.status
+        
+        # Serialize photos to JSON for history
+        photo_urls_json = None
+        if reservation.photos:
+            photo_urls_json = json.dumps([{
+                'type': photo.photo_type.value if hasattr(photo.photo_type, 'value') else photo.photo_type,
+                'url': photo.photo_url,
+                'uploaded_at': photo.uploaded_at.isoformat() if photo.uploaded_at else None,
+                'approved': photo.approved
+            } for photo in reservation.photos])
         
         history = ReservationHistoryModel(
             reservation_id=reservation.id,
@@ -426,7 +462,7 @@ class ReservationHistoryRepository:
             formatted_time=reservation.formatted_time,
             status=status_value,
             is_admin_block=(status_value == ReservationStatusEnum.ADMIN_BLOCK.value),
-            photo_url=reservation.photo_url,
+            photo_urls=photo_urls_json,
             duration_hours=reservation.duration_hours,
             created_at=reservation.created_at,
             returned_at=reservation.returned_at,
@@ -913,3 +949,128 @@ class PhotoDebtRepository:
                 ToolModel.is_tool_room == True
             )
         ).all()
+
+
+class ReservationPhotoRepository:
+    """Repository for reservation photo operations"""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def add_photo(self, reservation_id: int, photo_type: PhotoTypeEnum,
+                 photo_url: str, user_id: str, username: str, 
+                 tool_name: str) -> ReservationPhotoModel:
+        """Add a photo to a reservation"""
+        photo = ReservationPhotoModel(
+            reservation_id=reservation_id,
+            photo_type=photo_type,
+            photo_url=photo_url,
+            user_id=user_id,
+            username=username,
+            tool_name=tool_name,
+            uploaded_at=datetime.utcnow()
+        )
+        self.session.add(photo)
+        return photo
+    
+    def get_photos(self, reservation_id: int) -> List[ReservationPhotoModel]:
+        """Get all photos for a reservation"""
+        return self.session.query(ReservationPhotoModel).filter(
+            ReservationPhotoModel.reservation_id == reservation_id
+        ).order_by(ReservationPhotoModel.uploaded_at).all()
+    
+    def get_photos_by_type(self, reservation_id: int, 
+                          photo_type: PhotoTypeEnum) -> List[ReservationPhotoModel]:
+        """Get photos of a specific type for a reservation"""
+        return self.session.query(ReservationPhotoModel).filter(
+            and_(
+                ReservationPhotoModel.reservation_id == reservation_id,
+                ReservationPhotoModel.photo_type == photo_type
+            )
+        ).order_by(ReservationPhotoModel.uploaded_at).all()
+    
+    def get_pending_review_photos(self, limit: int = 50) -> List[ReservationPhotoModel]:
+        """Get photos pending admin review"""
+        return self.session.query(ReservationPhotoModel).filter(
+            ReservationPhotoModel.approved.is_(None)
+        ).order_by(ReservationPhotoModel.uploaded_at).limit(limit).all()
+    
+    def get_pending_review_for_user(self, user_id: str) -> List[ReservationPhotoModel]:
+        """Get pending review photos for a specific user"""
+        return self.session.query(ReservationPhotoModel).filter(
+            and_(
+                ReservationPhotoModel.user_id == user_id,
+                ReservationPhotoModel.approved.is_(None)
+            )
+        ).order_by(ReservationPhotoModel.uploaded_at).all()
+    
+    def review_photo(self, photo_id: int, approved: bool, 
+                    reviewer_user_id: str, reviewer_username: str,
+                    notes: Optional[str] = None) -> bool:
+        """Review and approve/reject a photo"""
+        photo = self.session.query(ReservationPhotoModel).filter(
+            ReservationPhotoModel.id == photo_id
+        ).first()
+        
+        if not photo:
+            return False
+        
+        photo.approved = approved
+        photo.reviewed_by_user_id = reviewer_user_id
+        photo.reviewed_by_username = reviewer_username
+        photo.reviewed_at = datetime.utcnow()
+        photo.review_notes = notes
+        
+        return True
+    
+    def bulk_approve_photos(self, reservation_id: int, 
+                           reviewer_user_id: str, reviewer_username: str) -> int:
+        """Approve all pending photos for a reservation"""
+        photos = self.session.query(ReservationPhotoModel).filter(
+            and_(
+                ReservationPhotoModel.reservation_id == reservation_id,
+                ReservationPhotoModel.approved.is_(None)
+            )
+        ).all()
+        
+        count = 0
+        for photo in photos:
+            photo.approved = True
+            photo.reviewed_by_user_id = reviewer_user_id
+            photo.reviewed_by_username = reviewer_username
+            photo.reviewed_at = datetime.utcnow()
+            count += 1
+        
+        return count
+    
+    def get_photo_by_id(self, photo_id: int) -> Optional[ReservationPhotoModel]:
+        """Get a specific photo by ID"""
+        return self.session.query(ReservationPhotoModel).filter(
+            ReservationPhotoModel.id == photo_id
+        ).first()
+    
+    def delete_photo(self, photo_id: int) -> bool:
+        """Delete a photo"""
+        photo = self.get_photo_by_id(photo_id)
+        if photo:
+            self.session.delete(photo)
+            return True
+        return False
+    
+    def convert_to_model(self, db_photo: ReservationPhotoModel) -> ReservationPhoto:
+        """Convert database model to dataclass"""
+        return ReservationPhoto(
+            id=db_photo.id,
+            reservation_id=db_photo.reservation_id,
+            photo_type=PhotoType.START if db_photo.photo_type == PhotoTypeEnum.START else PhotoType.RETURN,
+            photo_url=db_photo.photo_url,
+            uploaded_at=db_photo.uploaded_at,
+            user_id=db_photo.user_id,
+            username=db_photo.username,
+            tool_name=db_photo.tool_name,
+            reviewed_by_user_id=db_photo.reviewed_by_user_id,
+            reviewed_by_username=db_photo.reviewed_by_username,
+            reviewed_at=db_photo.reviewed_at,
+            approved=db_photo.approved,
+            review_notes=db_photo.review_notes
+        )

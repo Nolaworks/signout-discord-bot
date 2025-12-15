@@ -32,6 +32,12 @@ class PhotoDebtTypeEnum(enum.Enum):
     RETURN = "return"
 
 
+class PhotoTypeEnum(enum.Enum):
+    """Type of reservation photo"""
+    START = "start"
+    RETURN = "return"
+
+
 class UserModel(Base):
     """User database model"""
     __tablename__ = "users"
@@ -119,7 +125,6 @@ class ReservationModel(Base):
     # Status and metadata
     status = Column(SQLEnum(ReservationStatusEnum, values_callable=lambda x: [e.value for e in x]), default=ReservationStatusEnum.ACTIVE, 
                     nullable=False, index=True)
-    photo_url = Column(Text)
     duration_hours = Column(Float, nullable=False)
     
     # Photo enforcement fields
@@ -137,6 +142,9 @@ class ReservationModel(Base):
                        foreign_keys=[user_id])
     tool = relationship("ToolModel", back_populates="reservations",
                        foreign_keys=[tool_id])
+    photos = relationship("ReservationPhotoModel", back_populates="reservation",
+                         foreign_keys="ReservationPhotoModel.reservation_id",
+                         cascade="all, delete-orphan")
     
     __table_args__ = (
         CheckConstraint('end_time > start_time', name='check_end_after_start'),
@@ -147,6 +155,44 @@ class ReservationModel(Base):
     
     def __repr__(self):
         return f"<Reservation(user={self.username}, tool={self.tool_name}, time={self.formatted_time})>"
+
+
+class ReservationPhotoModel(Base):
+    """Photos attached to reservations (start and return photos)"""
+    __tablename__ = "reservation_photos"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    reservation_id = Column(Integer, ForeignKey("reservations.id"), nullable=False, index=True)
+    
+    # Photo metadata
+    photo_type = Column(SQLEnum(PhotoTypeEnum, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    photo_url = Column(Text, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Cached info for convenience
+    user_id = Column(String(50), nullable=False)
+    username = Column(String(100), nullable=False)
+    tool_name = Column(String(100), nullable=False)
+    
+    # Admin review fields
+    reviewed_by_user_id = Column(String(50))  # Admin who reviewed
+    reviewed_by_username = Column(String(100))
+    reviewed_at = Column(DateTime)
+    approved = Column(Boolean)  # True=approved, False=rejected, None=pending
+    review_notes = Column(Text)  # Optional admin notes
+    
+    # Relationships
+    reservation = relationship("ReservationModel", back_populates="photos",
+                             foreign_keys=[reservation_id])
+    
+    __table_args__ = (
+        Index('idx_photo_reservation_type', 'reservation_id', 'photo_type'),
+        Index('idx_photo_review_status', 'approved', 'reviewed_at'),
+    )
+    
+    def __repr__(self):
+        status = "approved" if self.approved else ("rejected" if self.approved is False else "pending")
+        return f"<ReservationPhoto(reservation_id={self.reservation_id}, type={self.photo_type.value}, status={status})>"
 
 
 class ReservationHistoryModel(Base):
@@ -171,7 +217,7 @@ class ReservationHistoryModel(Base):
     # Status and metadata
     status = Column(SQLEnum(ReservationStatusEnum, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     is_admin_block = Column(Boolean, default=False, nullable=False, index=True)
-    photo_url = Column(Text)
+    photo_urls = Column(Text)  # JSON array of photo URLs for historical records
     duration_hours = Column(Float, nullable=False)
     
     # Timestamps

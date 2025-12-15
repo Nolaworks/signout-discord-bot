@@ -234,12 +234,20 @@ async def handle_dm_photo_upload(message: discord.Message):
             logger.info(f"User {username} attempted to clear photo debt via DM - requires admin")
             return
         
-        # Check for active reservations needing photos (photo_required=True, photo_url=None)
+        # Check for active reservations needing photos (photo_required=True, no start photos)
+        from database import ReservationPhotoModel, PhotoTypeEnum
+        from repositories import ReservationPhotoRepository
+        
         active_reservations = res_repo.get_active_for_user(user_id)
-        reservations_needing_photo = [
-            r for r in active_reservations 
-            if r.photo_required and r.photo_url is None
-        ]
+        photo_repo = ReservationPhotoRepository(session)
+        
+        reservations_needing_photo = []
+        for r in active_reservations:
+            if r.photo_required:
+                # Check if has start photos
+                start_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.START)
+                if not start_photos:
+                    reservations_needing_photo.append(r)
         
         if not reservations_needing_photo:
             await message.channel.send(
@@ -252,8 +260,15 @@ async def handle_dm_photo_upload(message: discord.Message):
         reservations_needing_photo.sort(key=lambda r: r.start_time)
         reservation = reservations_needing_photo[0]
         
-        # Attach photo to reservation
-        reservation.photo_url = photo.url
+        # Add photo to reservation
+        photo_repo.add_photo(
+            reservation_id=reservation.id,
+            photo_type=PhotoTypeEnum.START,
+            photo_url=photo.url,
+            user_id=user_id,
+            username=username,
+            tool_name=reservation.tool_name
+        )
         session.commit()
         
         await message.channel.send(
@@ -1219,10 +1234,23 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             end_time=end_time,
             original_text=time,
             formatted_time=formatted_time,
-            photo_url=photo_url,
             status=ReservationStatusEnum.ACTIVE,
             photo_required=photo_required
         )
+        
+        # Add start photo if provided
+        if photo_url:
+            from database import PhotoTypeEnum
+            from repositories import ReservationPhotoRepository
+            photo_repo = ReservationPhotoRepository(session)
+            photo_repo.add_photo(
+                reservation_id=reservation.id,
+                photo_type=PhotoTypeEnum.START,
+                photo_url=photo_url,
+                user_id=user_id,
+                username=username,
+                tool_name=tool_name
+            )
         
         # Increment consecutive signout counter (unless admin)
         if not is_admin:
@@ -1403,16 +1431,27 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
             await interaction.followup.send(
                 f"**WARNING: Return photo required!**\n"
                 f"You have 30 minutes to send a photo of the tool to this bot via DM, "
-                f"or you will be blocked from all Tool Room signouts.\n\n"
+                f"or you will be blocked from all Tool Room signouts.\\n\\n"
                 f"Contact an admin if you cannot provide the photo.",
                 ephemeral=True
             )
             logger.warning(f"Return without photo - created photo debt: {interaction.user.name} - {tool_name}")
             return
         
-        # Normal return (photo provided or not required)
+        # Normal return - add return photo if provided
+        from database import PhotoTypeEnum
+        from repositories import ReservationPhotoRepository
+        
         if photo_url:
-            res.photo_url = photo_url
+            photo_repo = ReservationPhotoRepository(session)
+            photo_repo.add_photo(
+                reservation_id=res.id,
+                photo_type=PhotoTypeEnum.RETURN,
+                photo_url=photo_url,
+                user_id=str(interaction.user.id),
+                username=interaction.user.name,
+                tool_name=tool_name
+            )
         
         # Mark as RETURNED (cleanup task will archive it)
         res.status = ReservationStatusEnum.RETURNED

@@ -4,7 +4,7 @@ Uses dataclasses for type safety and cleaner code.
 """
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 
 
@@ -15,6 +15,12 @@ class ReservationStatus(Enum):
     RETURNED = "RETURNED"
     CANCELLED = "CANCELLED"
     ADMIN_BLOCK = "ADMIN_BLOCK"
+
+
+class PhotoType(Enum):
+    """Type of reservation photo"""
+    START = "start"
+    RETURN = "return"
 
 
 @dataclass
@@ -47,6 +53,37 @@ class Tool:
 
 
 @dataclass
+class ReservationPhoto:
+    """Represents a photo attached to a reservation"""
+    id: Optional[int] = None
+    reservation_id: Optional[int] = None
+    photo_type: PhotoType = PhotoType.START
+    photo_url: str = ""
+    uploaded_at: datetime = field(default_factory=datetime.now)
+    user_id: str = ""
+    username: str = ""
+    tool_name: str = ""
+    # Admin review fields
+    reviewed_by_user_id: Optional[str] = None
+    reviewed_by_username: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    approved: Optional[bool] = None  # True=approved, False=rejected, None=pending
+    review_notes: Optional[str] = None
+    
+    def is_pending(self) -> bool:
+        """Check if photo is pending review"""
+        return self.approved is None
+    
+    def is_approved(self) -> bool:
+        """Check if photo is approved"""
+        return self.approved is True
+    
+    def is_rejected(self) -> bool:
+        """Check if photo is rejected"""
+        return self.approved is False
+
+
+@dataclass
 class Reservation:
     """Represents a tool reservation"""
     id: Optional[int] = None
@@ -58,10 +95,34 @@ class Reservation:
     original_text: str = ""
     formatted_time: str = ""
     status: ReservationStatus = ReservationStatus.ACTIVE
-    photo_url: Optional[str] = None
+    photos: List[ReservationPhoto] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     returned_at: Optional[datetime] = None
+    
+    def get_start_photos(self) -> List[ReservationPhoto]:
+        """Get all start photos for this reservation"""
+        return [p for p in self.photos if p.photo_type == PhotoType.START]
+    
+    def get_return_photos(self) -> List[ReservationPhoto]:
+        """Get all return photos for this reservation"""
+        return [p for p in self.photos if p.photo_type == PhotoType.RETURN]
+    
+    def has_start_photo(self) -> bool:
+        """Check if reservation has at least one start photo"""
+        return len(self.get_start_photos()) > 0
+    
+    def has_return_photo(self) -> bool:
+        """Check if reservation has at least one return photo"""
+        return len(self.get_return_photos()) > 0
+    
+    def get_approved_start_photos(self) -> List[ReservationPhoto]:
+        """Get approved start photos"""
+        return [p for p in self.get_start_photos() if p.is_approved()]
+    
+    def get_approved_return_photos(self) -> List[ReservationPhoto]:
+        """Get approved return photos"""
+        return [p for p in self.get_return_photos() if p.is_approved()]
     
     def duration_hours(self) -> float:
         """Calculate reservation duration in hours"""

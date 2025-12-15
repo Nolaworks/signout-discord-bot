@@ -134,6 +134,12 @@ class AdminPanel(commands.Cog):
         parent=admin_group
     )
     
+    photo_group = app_commands.Group(
+        name="photo",
+        description="Photo review and management",
+        parent=admin_group
+    )
+    
     # Subgroups under /debug
     logs_group = app_commands.Group(
         name="logs",
@@ -195,7 +201,6 @@ class AdminPanel(commands.Cog):
     # ========== Log Management Commands ==========
 
     # ========== Adjust Time Commands ==========
-    # Note: Old commands removed - use /admin tool, /admin reservation, /admin block, /admin limit, /admin exempt, /admin role, /debug logs instead
 
     @app_commands.command(name="adjusttime", description="Adjust your reservation: change start, end, or range")
     @app_commands.default_permissions(administrator=False)
@@ -1994,6 +1999,260 @@ class AdminPanel(commands.Cog):
                 embed.set_footer(text=f"Showing 15 of {len(debts)} debts")
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    # Photo Review Commands
+    @photo_group.command(name="pending", description="Admin: View photos pending review")
+    @is_admin_check()
+    @app_commands.describe(limit="Maximum number to show")
+    async def photo_pending(self, interaction: discord.Interaction, limit: int = 10):
+        """View photos pending admin review"""
+        with get_db_session() as session:
+            from repositories import ReservationPhotoRepository
+            photo_repo = ReservationPhotoRepository(session)
+            
+            pending_photos = photo_repo.get_pending_review_photos(limit=min(limit, 50))
+            
+            if not pending_photos:
+                await interaction.response.send_message(
+                    "✓ No photos pending review!",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title="📸 Photos Pending Review",
+                description=f"Found {len(pending_photos)} pending photos",
+                color=discord.Color.orange()
+            )
+            
+            for photo in pending_photos[:limit]:
+                # Get reservation details
+                from database import ReservationModel
+                reservation = session.query(ReservationModel).filter_by(id=photo.reservation_id).first()
+                
+                status_info = "Active" if reservation and reservation.status.value == "ACTIVE" else "Archived"
+                photo_type_emoji = "🔧" if photo.photo_type.value == "start" else "✅"
+                
+                embed.add_field(
+                    name=f"{photo_type_emoji} Photo ID {photo.id} - {photo.photo_type.value.upper()}",
+                    value=(
+                        f"**User:** {photo.username}\\n"
+                        f"**Tool:** {photo.tool_name}\\n"
+                        f"**Uploaded:** {photo.uploaded_at.strftime('%m/%d %I:%M%p')}\\n"
+                        f"**Reservation:** {status_info}\\n"
+                        f"[View Photo]({photo.photo_url})"
+                    ),
+                    inline=False
+                )
+            
+            embed.set_footer(text="Use /admin photo approve or /admin photo reject to review")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @photo_group.command(name="approve", description="Admin: Approve a photo")
+    @is_admin_check()
+    @app_commands.describe(
+        photo_id="Photo ID to approve",
+        notes="Optional notes about the approval"
+    )
+    async def photo_approve(self, interaction: discord.Interaction, photo_id: int, notes: str = None):
+        """Approve a photo"""
+        with get_db_session() as session:
+            from repositories import ReservationPhotoRepository
+            photo_repo = ReservationPhotoRepository(session)
+            
+            photo = photo_repo.get_photo_by_id(photo_id)
+            if not photo:
+                await interaction.response.send_message(
+                    f"❌ Photo ID {photo_id} not found",
+                    ephemeral=True
+                )
+                return
+            
+            if photo.approved is True:
+                await interaction.response.send_message(
+                    f"ℹ️ Photo ID {photo_id} is already approved by {photo.reviewed_by_username}",
+                    ephemeral=True
+                )
+                return
+            
+            success = photo_repo.review_photo(
+                photo_id=photo_id,
+                approved=True,
+                reviewer_user_id=str(interaction.user.id),
+                reviewer_username=interaction.user.name,
+                notes=notes
+            )
+            
+            if success:
+                session.commit()
+                await interaction.response.send_message(
+                    f"✅ Approved {photo.photo_type.value} photo for **{photo.username}** - **{photo.tool_name}**\\n"
+                    f"Photo ID: {photo_id}",
+                    ephemeral=True
+                )
+                logger.info(f"Admin {interaction.user.name} approved photo {photo_id}")
+            else:
+                await interaction.response.send_message(
+                    f"❌ Failed to approve photo {photo_id}",
+                    ephemeral=True
+                )
+    
+    @photo_group.command(name="reject", description="Admin: Reject a photo")
+    @is_admin_check()
+    @app_commands.describe(
+        photo_id="Photo ID to reject",
+        notes="Reason for rejection (shown to user)"
+    )
+    async def photo_reject(self, interaction: discord.Interaction, photo_id: int, notes: str = None):
+        """Reject a photo"""
+        with get_db_session() as session:
+            from repositories import ReservationPhotoRepository
+            photo_repo = ReservationPhotoRepository(session)
+            
+            photo = photo_repo.get_photo_by_id(photo_id)
+            if not photo:
+                await interaction.response.send_message(
+                    f"❌ Photo ID {photo_id} not found",
+                    ephemeral=True
+                )
+                return
+            
+            if photo.approved is False:
+                await interaction.response.send_message(
+                    f"ℹ️ Photo ID {photo_id} is already rejected by {photo.reviewed_by_username}",
+                    ephemeral=True
+                )
+                return
+            
+            success = photo_repo.review_photo(
+                photo_id=photo_id,
+                approved=False,
+                reviewer_user_id=str(interaction.user.id),
+                reviewer_username=interaction.user.name,
+                notes=notes
+            )
+            
+            if success:
+                session.commit()
+                await interaction.response.send_message(
+                    f"❌ Rejected {photo.photo_type.value} photo for **{photo.username}** - **{photo.tool_name}**\\n"
+                    f"Photo ID: {photo_id}\\n"
+                    f"Reason: {notes or 'No reason provided'}",
+                    ephemeral=True
+                )
+                logger.info(f"Admin {interaction.user.name} rejected photo {photo_id}: {notes}")
+            else:
+                await interaction.response.send_message(
+                    f"❌ Failed to reject photo {photo_id}",
+                    ephemeral=True
+                )
+    
+    @photo_group.command(name="view", description="Admin: View details of a specific photo")
+    @is_admin_check()
+    @app_commands.describe(photo_id="Photo ID to view")
+    async def photo_view(self, interaction: discord.Interaction, photo_id: int):
+        """View detailed information about a photo"""
+        with get_db_session() as session:
+            from repositories import ReservationPhotoRepository
+            from database import ReservationModel
+            photo_repo = ReservationPhotoRepository(session)
+            
+            photo = photo_repo.get_photo_by_id(photo_id)
+            if not photo:
+                await interaction.response.send_message(
+                    f"❌ Photo ID {photo_id} not found",
+                    ephemeral=True
+                )
+                return
+            
+            # Get reservation info
+            reservation = session.query(ReservationModel).filter_by(id=photo.reservation_id).first()
+            
+            embed = discord.Embed(
+                title=f"📸 Photo ID {photo.id}",
+                color=discord.Color.green() if photo.approved else (
+                    discord.Color.red() if photo.approved is False else discord.Color.orange()
+                )
+            )
+            
+            embed.add_field(name="Type", value=photo.photo_type.value.upper(), inline=True)
+            embed.add_field(
+                name="Status",
+                value="✅ Approved" if photo.approved else (
+                    "❌ Rejected" if photo.approved is False else "⏳ Pending"
+                ),
+                inline=True
+            )
+            embed.add_field(name="User", value=photo.username, inline=True)
+            embed.add_field(name="Tool", value=photo.tool_name, inline=True)
+            embed.add_field(
+                name="Uploaded",
+                value=photo.uploaded_at.strftime("%m/%d/%Y %I:%M%p"),
+                inline=True
+            )
+            
+            if reservation:
+                embed.add_field(
+                    name="Reservation",
+                    value=f"{reservation.status.value} - {reservation.formatted_time}",
+                    inline=False
+                )
+            
+            if photo.reviewed_at:
+                embed.add_field(
+                    name="Reviewed By",
+                    value=f"{photo.reviewed_by_username} on {photo.reviewed_at.strftime('%m/%d/%Y %I:%M%p')}",
+                    inline=False
+                )
+            
+            if photo.review_notes:
+                embed.add_field(name="Review Notes", value=photo.review_notes, inline=False)
+            
+            embed.set_image(url=photo.photo_url)
+            embed.set_footer(text=f"Reservation ID: {photo.reservation_id}")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @photo_group.command(name="bulkapprove", description="Admin: Approve all pending photos for a reservation")
+    @is_admin_check()
+    @app_commands.describe(reservation_id="Reservation ID")
+    async def photo_bulk_approve(self, interaction: discord.Interaction, reservation_id: int):
+        """Bulk approve all pending photos for a reservation"""
+        with get_db_session() as session:
+            from repositories import ReservationPhotoRepository
+            from database import ReservationModel
+            photo_repo = ReservationPhotoRepository(session)
+            
+            # Verify reservation exists
+            reservation = session.query(ReservationModel).filter_by(id=reservation_id).first()
+            if not reservation:
+                await interaction.response.send_message(
+                    f"❌ Reservation ID {reservation_id} not found",
+                    ephemeral=True
+                )
+                return
+            
+            count = photo_repo.bulk_approve_photos(
+                reservation_id=reservation_id,
+                reviewer_user_id=str(interaction.user.id),
+                reviewer_username=interaction.user.name
+            )
+            
+            if count > 0:
+                session.commit()
+                await interaction.response.send_message(
+                    f"✅ Approved {count} photo(s) for reservation ID {reservation_id}\\n"
+                    f"**User:** {reservation.username}\\n"
+                    f"**Tool:** {reservation.tool_name}",
+                    ephemeral=True
+                )
+                logger.info(f"Admin {interaction.user.name} bulk approved {count} photos for reservation {reservation_id}")
+            else:
+                await interaction.response.send_message(
+                    f"ℹ️ No pending photos found for reservation ID {reservation_id}",
+                    ephemeral=True
+                )
 
 
 async def setup(bot):
