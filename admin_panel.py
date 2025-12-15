@@ -1905,24 +1905,46 @@ class AdminPanel(commands.Cog):
     
     # ========== Photo Debt Management Commands ==========
     
+    async def photo_debt_user_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete for users with outstanding photo debts"""
+        try:
+            with get_db_session() as session:
+                from repositories import PhotoDebtRepository
+                photo_debt_repo = PhotoDebtRepository(session)
+                
+                # Get all active debts
+                all_debts = photo_debt_repo.get_all_active_debts()
+                
+                # Get unique usernames
+                usernames = list(set(d.username for d in all_debts))
+                
+                # Filter by current input
+                if current:
+                    usernames = [u for u in usernames if current.lower() in u.lower()]
+                
+                # Sort and limit to 25
+                usernames.sort()
+                return [
+                    app_commands.Choice(name=username, value=username)
+                    for username in usernames[:25]
+                ]
+        except Exception as e:
+            logger.error(f"Error in photo_debt_user_autocomplete: {e}")
+            return []
+    
     @app_commands.command(name="clearphotodebt", description="Admin: Clear a user's photo debt")
     @is_admin_check()
-    @app_commands.describe(user="Username of the user")
+    @app_commands.describe(user="Select user with photo debt")
+    @app_commands.autocomplete(user=photo_debt_user_autocomplete)
     async def clear_photo_debt(self, interaction: discord.Interaction, user: str):
         """Clear all photo debts for a user"""
         with get_db_session() as session:
             from repositories import PhotoDebtRepository
-            user_repo = UserRepository(session)
             photo_debt_repo = PhotoDebtRepository(session)
             
-            # Find user
-            db_user = user_repo.get_by_username(user)
-            if not db_user:
-                await interaction.response.send_message(f"User `{user}` not found.", ephemeral=True)
-                return
-            
-            # Get their active debts
-            debts = photo_debt_repo.get_active_debts_for_user(db_user.user_id)
+            # Get all active debts and filter by username
+            all_debts = photo_debt_repo.get_all_active_debts()
+            debts = [d for d in all_debts if d.username.lower() == user.lower()]
             
             if not debts:
                 await interaction.response.send_message(
