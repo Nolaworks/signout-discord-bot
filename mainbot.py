@@ -64,6 +64,12 @@ async def clean_expired_signouts():
         with get_db_session() as session:
             res_repo = ReservationRepository(session)
             history_repo = ReservationHistoryRepository(session)
+            tool_repo = ToolRepository(session)
+            from repositories import ReservationPhotoRepository, PhotoDebtRepository
+            from database import PhotoTypeEnum, PhotoDebtTypeEnum
+            
+            photo_repo = ReservationPhotoRepository(session)
+            photo_debt_repo = PhotoDebtRepository(session)
             
             # Step 1: Mark expired reservations (ACTIVE/ADMIN_BLOCK past their end_time)
             expired = res_repo.get_expired_reservations(now_naive)
@@ -71,25 +77,75 @@ async def clean_expired_signouts():
                 logger.info(f"Marking {len(expired)} reservations as EXPIRED")
                 for reservation in expired:
                     old_status = reservation.status
+                    
+                    # For Tool Room tools, check if return photo exists
+                    tool = tool_repo.get_by_name(reservation.tool_name)
+                    if tool and tool.is_tool_room and old_status == ReservationStatusEnum.ACTIVE:
+                        # Check for return photos
+                        return_photos = photo_repo.get_photos_by_type(reservation.id, PhotoTypeEnum.RETURN)
+                        
+                        if not return_photos:
+                            # No return photo - create debt and send DM
+                            debt_due = now + timedelta(minutes=30)
+                            photo_debt_repo.create_debt(
+                                user_id=reservation.user_id,
+                                username=reservation.username,
+                                tool_id=tool.id,
+                                tool_name=reservation.tool_name,
+                                reservation_id=reservation.id,
+                                debt_type=PhotoDebtTypeEnum.RETURN,
+                                due_at=debt_due
+                            )
+                            
+                            # Send DM requesting return photo
+                            try:
+                                user = await bot.fetch_user(int(reservation.user_id))
+                                if user:
+                                    await user.send(
+                                        f"**Your {reservation.tool_name} reservation has ended.**\n\n"
+                                        f"Please send a photo of the tool via DM to complete your return.\n"
+                                        f"You have **30 minutes** to submit the return photo, or you will be blocked from Tool Room signouts.\n\n"
+                                        f"Reservation: `{reservation.formatted_time}`\n\n"
+                                        f"*Simply attach the photo in this DM conversation.*"
+                                    )
+                                    logger.info(f"Sent return photo request DM: {reservation.username} - {reservation.tool_name}")
+                            except Exception as e:
+                                logger.error(f"Failed to send return photo DM to {reservation.username}: {e}")
+                    
                     reservation.status = ReservationStatusEnum.EXPIRED
                     logger.info(f"Marked as expired: {reservation.username} - {reservation.tool_name} (was {old_status.value})")
                 session.commit()
             
             # Step 2: Archive and delete all non-ACTIVE reservations
+            # BUT: Keep EXPIRED reservations that have outstanding return photo debts
             non_active = res_repo.get_non_active_reservations()
             if non_active:
-                logger.info(f"Archiving {len(non_active)} non-active reservations")
+                archived_count = 0
                 for reservation in non_active:
+                    # Check if this is an EXPIRED reservation with outstanding return photo debt
+                    if reservation.status == ReservationStatusEnum.EXPIRED:
+                        # Check for active return photo debts for this reservation
+                        active_return_debts = photo_debt_repo.get_active_debts_for_reservation(reservation.id, PhotoDebtTypeEnum.RETURN)
+                        
+                        if active_return_debts:
+                            # Don't archive yet - user needs to upload return photo
+                            logger.info(f"Keeping EXPIRED reservation {reservation.username} - {reservation.tool_name} (has active return photo debt)")
+                            continue
+                    
                     # Archive to history (with current status: EXPIRED, CANCELLED, RETURNED)
                     history_repo.archive_reservation(reservation)
                     
                     # Delete from reservations table
                     session.delete(reservation)
+                    archived_count += 1
                     
                     logger.info(f"Archived {reservation.status.value}: {reservation.username} - {reservation.tool_name}")
                 
-                session.commit()
-                logger.info("Cleanup completed successfully")
+                if archived_count > 0:
+                    session.commit()
+                    logger.info(f"Cleanup completed successfully - archived {archived_count} reservations")
+                else:
+                    logger.info("Cleanup completed - no reservations to archive")
     except Exception as e:
         logger.error(f"Error cleaning expired signouts: {e}", exc_info=True)
 
@@ -216,66 +272,140 @@ async def handle_dm_photo_upload(message: discord.Message):
         from repositories import PhotoDebtRepository
         photo_debt_repo = PhotoDebtRepository(session)
         
-        # First, check for active photo debts - users cannot clear these themselves
+        # Check for active photo debts
         active_debts = photo_debt_repo.get_active_debts_for_user(user_id)
         
-        if active_debts:
-            # Inform user they need admin help
-            from database import PhotoDebtTypeEnum
-            return_debts = [d for d in active_debts if d.debt_type == PhotoDebtTypeEnum.RETURN]
-            debt = return_debts[0] if return_debts else active_debts[0]
+        # Separate return debts by grace period status
+        from database import PhotoDebtTypeEnum
+        from time_utils import get_now, CENTRAL_TZ
+        
+        now = get_now(CENTRAL_TZ).replace(tzinfo=None)
+        
+        return_debts_in_grace = []  # Can be cleared by user
+        return_debts_expired = []  # Require admin
+        start_debts = []
+        
+        for debt in active_debts:
+            if debt.debt_type == PhotoDebtTypeEnum.RETURN:
+                # Check if still within grace period
+                if now < debt.due_at:
+                    return_debts_in_grace.append(debt)
+                else:
+                    return_debts_expired.append(debt)
+            else:
+                start_debts.append(debt)
+        
+        # Block if user has START photo debts OR expired return debts (both require admin)
+        if start_debts or return_debts_expired:
+            debt = start_debts[0] if start_debts else return_debts_expired[0]
+            
+            if debt.debt_type == PhotoDebtTypeEnum.RETURN:
+                grace_msg = "The 30-minute grace period has expired.\n\n"
+            else:
+                grace_msg = ""
             
             await message.channel.send(
                 f"You have an outstanding photo debt for **{debt.tool_name}** "
                 f"({debt.debt_type.value} photo not provided).\n\n"
+                f"{grace_msg}"
                 f"Photo debts must be cleared by an administrator. Please contact an admin "
                 f"and show them this photo to resolve the debt."
             )
-            logger.info(f"User {username} attempted to clear photo debt via DM - requires admin")
+            logger.info(f"User {username} attempted to clear {debt.debt_type.value} photo debt via DM - requires admin (grace expired: {debt.debt_type == PhotoDebtTypeEnum.RETURN})")
             return
         
         # Check for active reservations needing photos (photo_required=True, no start photos)
-        from database import ReservationPhotoModel, PhotoTypeEnum
+        from database import ReservationPhotoModel, PhotoTypeEnum, ReservationModel
         from repositories import ReservationPhotoRepository
+        from sqlalchemy import and_
         
         active_reservations = res_repo.get_active_for_user(user_id)
         photo_repo = ReservationPhotoRepository(session)
         
-        reservations_needing_photo = []
+        # Check for start photos needed
+        reservations_needing_start_photo = []
         for r in active_reservations:
             if r.photo_required:
                 # Check if has start photos
                 start_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.START)
                 if not start_photos:
-                    reservations_needing_photo.append(r)
+                    reservations_needing_start_photo.append(r)
         
-        if not reservations_needing_photo:
-            await message.channel.send(
-                "No active reservations or photo requirements found. "
-                "If you need to attach a photo to a specific reservation, please contact an admin."
+        if reservations_needing_start_photo:
+            # Prioritize reservation starting soonest
+            reservations_needing_start_photo.sort(key=lambda r: r.start_time)
+            reservation = reservations_needing_start_photo[0]
+            
+            # Add start photo
+            photo_repo.add_photo(
+                reservation_id=reservation.id,
+                photo_type=PhotoTypeEnum.START,
+                photo_url=photo.url,
+                user_id=user_id,
+                username=username,
+                tool_name=reservation.tool_name
             )
+            session.commit()
+            
+            await message.channel.send(
+                f"✓ **Start photo** attached to your **{reservation.tool_name}** reservation "
+                f"({reservation.formatted_time}). Thank you!"
+            )
+            logger.info(f"Attached start photo via DM for {username} - {reservation.tool_name}")
             return
         
-        # Prioritize reservation starting soonest
-        reservations_needing_photo.sort(key=lambda r: r.start_time)
-        reservation = reservations_needing_photo[0]
+        # Check for EXPIRED reservations needing return photos (Tool Room only)
+        expired_reservations = session.query(ReservationModel).filter(
+            and_(
+                ReservationModel.user_id == user_id,
+                ReservationModel.status == ReservationStatusEnum.EXPIRED
+            )
+        ).all()
         
-        # Add photo to reservation
-        photo_repo.add_photo(
-            reservation_id=reservation.id,
-            photo_type=PhotoTypeEnum.START,
-            photo_url=photo.url,
-            user_id=user_id,
-            username=username,
-            tool_name=reservation.tool_name
-        )
-        session.commit()
+        reservations_needing_return_photo = []
+        for r in expired_reservations:
+            # Check if has return photos
+            return_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.RETURN)
+            if not return_photos:
+                reservations_needing_return_photo.append(r)
         
+        if reservations_needing_return_photo:
+            # Use the most recent expired reservation
+            reservations_needing_return_photo.sort(key=lambda r: r.end_time, reverse=True)
+            reservation = reservations_needing_return_photo[0]
+            
+            # Add return photo
+            photo_repo.add_photo(
+                reservation_id=reservation.id,
+                photo_type=PhotoTypeEnum.RETURN,
+                photo_url=photo.url,
+                user_id=user_id,
+                username=username,
+                tool_name=reservation.tool_name
+            )
+            
+            # Clear any return photo debts for this reservation (only if within grace period)
+            if return_debts_in_grace:
+                for debt in return_debts_in_grace:
+                    if debt.reservation_id == reservation.id:
+                        photo_debt_repo.clear_debt(debt.id)
+                        logger.info(f"Cleared return photo debt for {username} - {reservation.tool_name} (within grace period)")
+            
+            session.commit()
+            
+            await message.channel.send(
+                f"✓ **Return photo** attached to your **{reservation.tool_name}** reservation "
+                f"({reservation.formatted_time}). Thank you!\n\n"
+                f"Your photo debt has been cleared."
+            )
+            logger.info(f"Attached return photo via DM for {username} - {reservation.tool_name}")
+            return
+        
+        # No reservations found needing photos
         await message.channel.send(
-            f"Photo attached to your **{reservation.tool_name}** reservation "
-            f"({reservation.formatted_time}). Thank you!"
+            "No active reservations or photo requirements found. "
+            "If you need to attach a photo to a specific reservation, please contact an admin."
         )
-        logger.info(f"Attached photo via DM for {username} - {reservation.tool_name}")
 
 
 # ========== Notification and Waitlist Commands ==========
@@ -1358,15 +1488,13 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
 
 @bot.tree.command(name="returntool", description="Return the currently signed-out tool")
 @app_commands.describe(
-    reservation="Select your reservation to return",
-    photo="Required in Tool Room: photo of the tool at return"
+    reservation="Select your reservation to return"
 )
 @app_commands.autocomplete(reservation=reservation_autocomplete)
 @app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
-async def tool_return(interaction: discord.Interaction, reservation: str, photo: discord.Attachment | None = None):
+async def tool_return(interaction: discord.Interaction, reservation: str):
     """Return a tool reservation"""
-    # Note: We don't validate photo requirement here anymore
-    # Instead, we create photo debt if missing in Tool Room
+    # Note: Tool Room tools require return photo via DM, not in channel
     
     # Validate channel
     try:
@@ -1393,13 +1521,10 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
             )
             return
         
-        # Get photo URL if provided
-        photo_url = await get_photo_url(photo) if photo else None
-        
-        # Check if this is a Tool Room tool and photo is missing
+        # Check if this is a Tool Room tool
         tool = tool_repo.get_by_name(tool_name)
-        if tool and tool.is_tool_room and not photo_url:
-            # Create photo debt
+        if tool and tool.is_tool_room:
+            # Create photo debt for return photo
             from repositories import PhotoDebtRepository
             from database import PhotoDebtTypeEnum
             from time_utils import get_now, CENTRAL_TZ
@@ -1417,7 +1542,7 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
                 due_at=debt_due
             )
             
-            # Still mark as returned, but notify user about debt
+            # Mark as returned
             res.status = ReservationStatusEnum.RETURNED
             res.returned_at = datetime.utcnow()
             session.commit()
@@ -1427,52 +1552,33 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
                 f"{display_name} returned **{tool_name}** — `{reservation}`"
             )
             
-            # Send photo debt warning privately to the user
-            await interaction.followup.send(
-                f"**WARNING: Return photo required!**\n"
-                f"You have 30 minutes to send a photo of the tool to this bot via DM, "
-                f"or you will be blocked from all Tool Room signouts.\\n\\n"
-                f"Contact an admin if you cannot provide the photo.",
-                ephemeral=True
-            )
-            logger.warning(f"Return without photo - created photo debt: {interaction.user.name} - {tool_name}")
+            # Send DM with photo request
+            try:
+                await interaction.user.send(
+                    f"**Return photo required for {tool_name}**\n\n"
+                    f"Please send a photo of the tool via DM to complete your return.\n"
+                    f"You have **30 minutes** to submit the photo, or you will be blocked from Tool Room signouts.\n\n"
+                    f"Reservation: `{reservation}`\n\n"
+                    f"*Simply attach the photo in this DM conversation.*"
+                )
+                logger.info(f"Sent return photo request DM: {interaction.user.name} - {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send return photo DM to {interaction.user.name}: {e}")
+                await interaction.followup.send(
+                    f"**WARNING: Could not send you a DM!**\n"
+                    f"Please enable DMs from this server and send a photo of **{tool_name}** to the bot within 30 minutes.",
+                    ephemeral=True
+                )
             return
         
-        # Normal return - add return photo if provided
-        from database import PhotoTypeEnum
-        from repositories import ReservationPhotoRepository
-        
-        if photo_url:
-            photo_repo = ReservationPhotoRepository(session)
-            photo_repo.add_photo(
-                reservation_id=res.id,
-                photo_type=PhotoTypeEnum.RETURN,
-                photo_url=photo_url,
-                user_id=str(interaction.user.id),
-                username=interaction.user.name,
-                tool_name=tool_name
-            )
-        
-        # Mark as RETURNED (cleanup task will archive it)
+        # Non-Tool Room return - simple confirmation
         res.status = ReservationStatusEnum.RETURNED
         res.returned_at = datetime.utcnow()
         session.commit()
         
-        # Prepare response
-        message = f"{display_name} returned **{tool_name}** — `{reservation}`"
-        
-        # Attach photo if provided
-        files = []
-        if photo is not None:
-            try:
-                files = [await photo.to_file(use_cached=True)]
-            except Exception:
-                pass
-        
-        if files:
-            await interaction.response.send_message(message, files=files)
-        else:
-            await interaction.response.send_message(message)
+        await interaction.response.send_message(
+            f"{display_name} returned **{tool_name}** — `{reservation}`"
+        )
         
         logger.info(f"Returned reservation: {res.username} - {tool_name} - {reservation}")
 

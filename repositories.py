@@ -920,6 +920,19 @@ class PhotoDebtRepository:
         
         return True
     
+    def clear_debt(self, debt_id: int) -> bool:
+        """Clear a photo debt (mark as resolved without admin intervention)"""
+        from database import PhotoDebtModel
+        
+        debt = self.session.query(PhotoDebtModel).filter_by(id=debt_id).first()
+        if not debt:
+            return False
+        
+        debt.resolved_at = datetime.utcnow()
+        debt.cleared_by_admin = False
+        
+        return True
+    
     def has_tool_room_debt(self, user_id: str) -> bool:
         """Check if user has any unresolved photo debt for Tool Room tools"""
         from database import PhotoDebtModel, ToolModel
@@ -948,6 +961,23 @@ class PhotoDebtRepository:
                 PhotoDebtModel.resolved_at.is_(None),
                 ToolModel.is_tool_room == True
             )
+        ).all()
+    
+    def get_active_debts_for_reservation(self, reservation_id: int, 
+                                         debt_type: Optional['PhotoDebtTypeEnum'] = None) -> List['PhotoDebtModel']:
+        """Get all unresolved photo debts for a specific reservation"""
+        from database import PhotoDebtModel
+        
+        filters = [
+            PhotoDebtModel.reservation_id == reservation_id,
+            PhotoDebtModel.resolved_at.is_(None)
+        ]
+        
+        if debt_type:
+            filters.append(PhotoDebtModel.debt_type == debt_type)
+        
+        return self.session.query(PhotoDebtModel).filter(
+            and_(*filters)
         ).all()
 
 
