@@ -4,7 +4,7 @@ import discord
 import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from discord import app_commands
 from discord.ext import commands, tasks
 
@@ -1201,23 +1201,10 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         time_until_start = (start_time - get_now(CENTRAL_TZ)).total_seconds() / 60
         photo_required = is_tool_room
         
-        # If Tool Room and starts <= 30 min away, photo must be provided NOW
+        # If Tool Room and starts <= 30 min away and no photo, create reservation but set photo_required
+        # User will need to DM photo within 10 min of start time
         if is_tool_room and time_until_start <= 30 and photo_url is None:
-            command_text = f"/signout time:{time} photo:[attach image here]"
-            
-            await interaction.followup.send(
-                f"**Photo Required**\n\n"
-                f"This Tool Room reservation starts in {int(time_until_start)} minutes. "
-                f"Photo must be attached now.\n\n"
-                f"**Copy this command and add your photo:**\n"
-                f"```\n{command_text}\n```\n"
-                f"1. Copy the command above\n"
-                f"2. Paste it in the message field\n"
-                f"3. Click the `photo:` field and attach your image\n"
-                f"4. Press Enter to submit",
-                ephemeral=True
-            )
-            return
+            logger.info(f"Tool Room reservation without photo (starts soon) - {username} - {tool_name} - starts in {int(time_until_start)} min")
         
         # If Tool Room and starts > 30 min away, photo can be provided later via DM
         if is_tool_room and time_until_start > 30 and photo_url is None:
@@ -1265,8 +1252,10 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             
             # Send photo reminder privately
             await interaction.followup.send(
-                f"**Photo Required:** You have until 10 minutes after your reservation starts to send a photo "
-                f"of the tool to this bot via DM. You'll get a reminder 15 minutes before your start time.",
+                f"**Photo Required for Tool Room**\n\n"
+                f"Send a photo of the tool to this bot via **Direct Message** before your reservation starts "
+                f"(or within 10 minutes after start).\n\n"
+                f"**How to send:** Click on the bot's name and send a photo in the DM chat.",
                 ephemeral=True
             )
             logger.info(f"Created reservation: {username} - {tool_name} - {formatted_time}")
