@@ -507,7 +507,7 @@ class NotificationManager:
                     f"Your reservation for **{reservation.tool_name}** has started, "
                     f"but you haven't provided the required photo yet.\n\n"
                     f"**You have 10 minutes to send a photo to this bot via DM, "
-                    f"or your reservation will be cancelled.**\n\n"
+                    f"or your reservation will be cancelled**\n\n"
                     f"Simply reply to this message with a photo of the tool."
                 ),
                 color=discord.Color.red()
@@ -542,7 +542,7 @@ class NotificationManager:
             
             # Create photo debt - immediate blocking (no grace period for start photos)
             debt_due = get_now(CENTRAL_TZ)  # Due immediately
-            photo_debt_repo.create_debt(
+            debt = photo_debt_repo.create_debt(
                 user_id=reservation.user_id,
                 username=reservation.username,
                 tool_id=reservation.tool_id,
@@ -551,17 +551,20 @@ class NotificationManager:
                 debt_type=PhotoDebtTypeEnum.START,
                 due_at=debt_due
             )
+            # Mark as notified since we're sending the message right now
+            debt.notified_at = datetime.utcnow()
             
             # Notify user
             user = await self.bot.fetch_user(int(reservation.user_id))
             embed = discord.Embed(
                 title="Reservation Cancelled - Photo Not Provided",
                 description=(
-                    f"Your reservation for **{reservation.tool_name}** has been cancelled "
-                    f"because you did not provide the required photo within the grace period.\n\n"
-                    f"**You are now blocked from signing out any Tool Room tools** until an admin "
-                    f"clears this photo debt.\n\n"
-                    f"Please contact a shop leader to resolve this issue."
+                    f"**Photo or it didn't happen!**\n\n"
+                    f"We had to cancel your **{reservation.tool_name}** reservation because apparently "
+                    f"taking a photo is harder than we thought.\n\n"
+                    f"**The Tool Room now considers you a flight risk.** Your tool privileges have been "
+                    f"temporarily relocated to the Shadow Realm.\n\n"
+                    f"Summon a shop leader to discuss your path to redemption."
                 ),
                 color=discord.Color.dark_red()
             )
@@ -608,9 +611,9 @@ class NotificationManager:
         photo_debt_repo = PhotoDebtRepository(session)
         blocked_count = 0
         
-        # Find all unresolved debts that are past due
+        # Find all unresolved debts that are past due and NOT already notified
         all_debts = photo_debt_repo.get_all_active_debts()
-        overdue_debts = [d for d in all_debts if CENTRAL_TZ.localize(d.due_at) <= now]
+        overdue_debts = [d for d in all_debts if CENTRAL_TZ.localize(d.due_at) <= now and d.notified_at is None]
         
         for debt in overdue_debts:
             try:
@@ -619,20 +622,22 @@ class NotificationManager:
                 embed = discord.Embed(
                     title="Blocked from Tool Room - Missing Photo",
                     description=(
-                        f"You failed to provide the required photo for **{debt.tool_name}** "
-                        f"within the grace period.\n\n"
-                        f"**You are now blocked from signing out ANY Tool Room tools.**\n\n"
-                        f"To resolve this:\n"
-                        f"1. Send a photo of the tool to this bot via DM\n"
-                        f"2. Or contact an admin for assistance\n\n"
-                        f"Photo Type: {debt.debt_type.value.upper()}"
+                        f"**Photo or it didn't happen!**\n\n"
+                        f"You have an outstanding photo debt for **{debt.tool_name}**.\n\n"
+                        f"**The Tool Room now considers you a flight risk.** Your tool privileges have been "
+                        f"temporarily relocated to the Shadow Realm.\n\n"
+                        f"Summon a shop leader to discuss your path to redemption."
                     ),
                     color=discord.Color.dark_red()
                 )
                 embed.add_field(name="Tool", value=debt.tool_name, inline=True)
-                embed.set_footer(text="This restriction will remain until the photo is provided")
+                embed.set_footer(text="This restriction will remain until an admin clears the debt")
                 
                 await user.send(embed=embed)
+                
+                # Mark debt as notified so we don't spam the user
+                debt.notified_at = datetime.utcnow()
+                session.commit()
                 
                 # Notify admin channel
                 await self._notify_admin_photo_debt_enforced(debt)

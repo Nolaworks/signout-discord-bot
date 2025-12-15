@@ -1120,7 +1120,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
                 await interaction.followup.send(
                     f"You have outstanding photo requirements and cannot sign out Tool Room tools:\n\n"
                     f"{debt_list}\n\n"
-                    f"Please send the missing photo(s) to this bot via DM, or contact an admin to resolve.",
+                    f"Please contact an admin to resolve.",
                     ephemeral=True
                 )
                 logger.info(f"Photo debt blocked {username} from signing out {tool_name}")
@@ -1250,10 +1250,27 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         
         # Add photo reminder for Tool Room reservations without photos
         if photo_required and not photo_url:
-            message += (
-                f"\n\n**Photo Required:** You have until 10 minutes after your reservation starts to send a photo "
-                f"of the tool to this bot via DM. You'll get a reminder 15 minutes before your start time."
+            # Send success message publicly
+            files = []
+            if photo is not None:
+                try:
+                    files = [await photo.to_file(use_cached=True)]
+                except Exception:
+                    pass
+            
+            if files:
+                await interaction.followup.send(message, files=files)
+            else:
+                await interaction.followup.send(message)
+            
+            # Send photo reminder privately
+            await interaction.followup.send(
+                f"**Photo Required:** You have until 10 minutes after your reservation starts to send a photo "
+                f"of the tool to this bot via DM. You'll get a reminder 15 minutes before your start time.",
+                ephemeral=True
             )
+            logger.info(f"Created reservation: {username} - {tool_name} - {formatted_time}")
+            return
         
         # Attach photo if provided
         files = []
@@ -1388,13 +1405,18 @@ async def tool_return(interaction: discord.Interaction, reservation: str, photo:
             res.returned_at = datetime.utcnow()
             session.commit()
             
+            # Send success message publicly
             await interaction.response.send_message(
-                f"{display_name} returned **{tool_name}** — `{reservation}`\n\n"
+                f"{display_name} returned **{tool_name}** — `{reservation}`"
+            )
+            
+            # Send photo debt warning privately to the user
+            await interaction.followup.send(
                 f"**WARNING: Return photo required!**\n"
                 f"You have 30 minutes to send a photo of the tool to this bot via DM, "
                 f"or you will be blocked from all Tool Room signouts.\n\n"
-                f"Send a photo directly to the bot to resolve this.",
-                ephemeral=False
+                f"Contact an admin if you cannot provide the photo.",
+                ephemeral=True
             )
             logger.warning(f"Return without photo - created photo debt: {interaction.user.name} - {tool_name}")
             return

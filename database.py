@@ -209,6 +209,7 @@ class PhotoDebtModel(Base):
     
     # Status
     resolved_at = Column(DateTime)
+    notified_at = Column(DateTime)  # When user was notified about enforcement
     cleared_by_admin = Column(Boolean, default=False)
     admin_user_id = Column(String(50))  # Which admin cleared it
     

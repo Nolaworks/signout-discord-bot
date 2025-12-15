@@ -1942,7 +1942,7 @@ class AdminPanel(commands.Cog):
             
             await interaction.response.send_message(
                 f"Cleared {len(debts)} photo debt(s) for **{user}**:\n{debt_list}",
-                ephemeral=False
+                ephemeral=True
             )
             logger.info(f"Admin {interaction.user.name} cleared {len(debts)} photo debts for {user}")
     
