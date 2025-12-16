@@ -398,7 +398,7 @@ class ReservationRepository:
     def check_conflicts(self, tool_name: str, start_time: datetime, 
                        end_time: datetime, 
                        exclude_reservation_id: Optional[int] = None) -> List[ReservationModel]:
-        """Check for conflicting reservations"""
+        """Check for conflicting reservations (includes ACTIVE and ADMIN_BLOCK)"""
         # Convert timezone-aware datetimes to naive for database comparison
         start_time_naive = start_time.replace(tzinfo=None) if start_time.tzinfo else start_time
         end_time_naive = end_time.replace(tzinfo=None) if end_time.tzinfo else end_time
@@ -406,7 +406,7 @@ class ReservationRepository:
         query = self.session.query(ReservationModel).filter(
             and_(
                 ReservationModel.tool_name == tool_name,
-                ReservationModel.status == ReservationStatusEnum.ACTIVE,
+                ReservationModel.status.in_([ReservationStatusEnum.ACTIVE, ReservationStatusEnum.ADMIN_BLOCK]),
                 ReservationModel.start_time < end_time_naive,
                 ReservationModel.end_time > start_time_naive
             )

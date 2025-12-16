@@ -1658,7 +1658,7 @@ async def on_guild_channel_create(channel):
         
         # Send welcome message
         tool_room_note = "\nThis is a Tool Room channel - photo requirements will apply." if is_tool_room else ""
-        role_msg = f"\nRole created: {role.mention} (role requirement is **enabled**)" if role else ""
+        role_msg = f"\nRole created: {role.mention} (role requirement is **enabled**)." if role else ""
         await channel.send(f"Tool '{tool_name}' has been added for reservations.{role_msg}{tool_room_note}")
 
 

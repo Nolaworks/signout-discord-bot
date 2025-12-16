@@ -1591,30 +1591,32 @@ class AdminPanel(commands.Cog):
         await interaction.response.defer(thinking=True, ephemeral=True)
         
         now = get_now(CENTRAL_TZ)
+        now_naive = now.replace(tzinfo=None)  # Convert to naive for database comparison
         
         with get_db_session() as session:
-            tool_repo = ToolRepository(session)
-            res_repo = ReservationRepository(session)
+            from database import ReservationModel
             
-            tools = tool_repo.get_all()
+            # Query all ADMIN_BLOCK reservations directly
+            all_blocks = session.query(ReservationModel).filter(
+                and_(
+                    ReservationModel.status == ReservationStatusEnum.ADMIN_BLOCK,
+                    ReservationModel.end_time > now_naive
+                )
+            ).order_by(ReservationModel.tool_name, ReservationModel.start_time).all()
+            
+            # Group by tool
+            from collections import defaultdict
+            blocks_by_tool = defaultdict(list)
+            for block in all_blocks:
+                blocks_by_tool[block.tool_name].append((block.start_time, block.end_time))
+            
             lines = []
-            
-            for tool in tools:
-                reservations = res_repo.get_active_for_tool(tool.name)
-                blocks = []
-                
-                for res in reservations:
-                    if res.status != ReservationStatusEnum.ADMIN_BLOCK:
-                        continue
-                    if res.end_time <= now:
-                        continue
-                    blocks.append((res.start_time, res.end_time))
-                
-                if blocks:
-                    blocks.sort(key=lambda x: x[0])
-                    ranges = ", ".join(f"{format_datetime(s)} to {format_datetime(e)}" for s, e in blocks[:5])
-                    more = f" (+{len(blocks)-5} more)" if len(blocks) > 5 else ""
-                    lines.append(f"• **{tool.name}**: {ranges}{more}")
+            for tool_name in sorted(blocks_by_tool.keys()):
+                blocks = blocks_by_tool[tool_name]
+                blocks.sort(key=lambda x: x[0])
+                ranges = ", ".join(f"{format_datetime(s)} to {format_datetime(e)}" for s, e in blocks[:5])
+                more = f" (+{len(blocks)-5} more)" if len(blocks) > 5 else ""
+                lines.append(f"• **{tool_name}**: {ranges}{more}")
             
             if not lines:
                 await interaction.followup.send("No active or upcoming admin blocks.", ephemeral=True)
