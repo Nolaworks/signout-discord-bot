@@ -14,10 +14,8 @@ If you used the old signout bot, here are the major improvements:
 - **Role-Based Tool Access** \- Most tools now require you to have the corresponding role before you can sign them out. This ensures you've been trained on the tool before using it. Contact a shop leader to get trained and receive access.
 - **Waitlist System** \- Join a waitlist and get notified when tools become available  
 - **Smart Notifications** \- Get reminders before your reservation starts and ends.  
-- **My Reservations** \- View all your active reservations across all tools with `/myreservations`  
-- **Consecutive Signout Limits** \- Fair access to high-demand tools (prevents monopolization)  
-- **Statistics** \- See your usage history with `/mystats`  
-- **`New adjusttime command`** \- It now allows you to update a portion of your reservation instead of essentially having to create a whole new signout. See below for an example.
+- **Consecutive Signout Limits** - Fair access to high-demand tools (prevents monopolization)  
+- **Improved `/adjusttime` command** - Update a portion of your reservation (start, end, or full range) instead of creating a whole new signout
 
 ### **Changed Commands**
 
@@ -113,13 +111,11 @@ Select the reservation you want to cancel.
 | Command | What it does |
 | :---- | :---- |
 | `/reservations` | See who has the tool reserved (in current tool channel) |
-| `/myreservations` | See **all your reservations** across all tools |
 | `/adjusttime` | Change your reservation time (select reservation, enter new time) |
 | `/cancel` | Cancel a reservation |
 | `/waitlist action:add` | Get notified when tool is available |
 | `/mywaitlist` | See tools you're waiting for |
 | `/notifyprefs` | Set up reminder notifications |
-| `/mystats` | View your usage statistics |
 | `/help` | Full command list |
 
 ---
@@ -140,9 +136,8 @@ Set your preferences with `/notifyprefs`.
 
 - **Get trained first** \- Most tools require you to have the tool's role before signing out. Contact a shop leader for training.
 - **Be specific with times** \- "2pm to 4pm" works better than "a couple hours"  
-- **Return tools promptly** \- Others may be waiting\!  
-- **Use the waitlist** \- Get notified instead of checking repeatedly  
-- **Check all your reservations** \- Use `/myreservations` to see everything you have reserved  
+- **Return tools promptly** - Others may be waiting  
+- **Use the waitlist** - Get notified instead of checking repeatedly  
 - **Include photos** when required \- It helps track tool condition  
 - **Don't hog high-demand tools** \- Some tools have consecutive signout limits for fairness
 
