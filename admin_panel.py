@@ -1623,6 +1623,157 @@ class AdminPanel(commands.Cog):
             else:
                 await interaction.followup.send("**Admin blocks:**\n" + "\n".join(lines), ephemeral=True)
 
+    async def create_reservation_for_user(self, interaction: discord.Interaction, username: str, 
+                                         tool_name: str, time: str, photo: discord.Attachment | None = None):
+        """Create a reservation on behalf of another user"""
+        from validation import validate_time_input
+        from discord_utils import get_photo_url
+        from gptparse import parse_time_with_gpt
+        from database import ReservationStatusEnum, PhotoTypeEnum
+        from repositories import ReservationPhotoRepository
+        
+        # Validate time input
+        is_valid, error_msg = validate_time_input(time)
+        if not is_valid:
+            await interaction.response.send_message(error_msg, ephemeral=True)
+            return
+        
+        await interaction.response.defer(thinking=True)
+        
+        with get_db_session() as session:
+            user_repo = UserRepository(session)
+            tool_repo = ToolRepository(session)
+            res_repo = ReservationRepository(session)
+            
+            # Find the user
+            user = user_repo.get_by_username(username)
+            if not user:
+                await interaction.followup.send(
+                    f"User `{username}` not found in the database.\n\n"
+                    f"They must use the bot at least once before you can create reservations for them.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get or create tool
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.followup.send(
+                    f"Tool `{tool_name}` does not exist.\n\n"
+                    f"Use `/admin tool add` to create it first.",
+                    ephemeral=True
+                )
+                return
+            
+            # Parse time with GPT
+            formatted_time = await parse_time_with_gpt(time)
+            
+            if not formatted_time:
+                await interaction.followup.send(
+                    "I couldn't understand the time range. Try being more specific.\n"
+                    "Example: 'now for 2 hours' or 'friday 2pm-3pm'",
+                    ephemeral=True
+                )
+                return
+            
+            # Parse the formatted time
+            try:
+                start_time, end_time = parse_time_range(formatted_time, CENTRAL_TZ)
+            except Exception as e:
+                logger.error(f"Error parsing formatted time '{formatted_time}': {e}")
+                await interaction.followup.send(
+                    "Error parsing the time. Please try again with a different format.",
+                    ephemeral=True
+                )
+                return
+            
+            # Check duration against max time
+            duration = calculate_duration_hours(start_time, end_time)
+            if duration > tool.max_time_hours:
+                await interaction.followup.send(
+                    f"Signout time ({duration:.1f}h) exceeds the max allowed for **{tool_name}** ({tool.max_time_hours} hours).",
+                    ephemeral=True
+                )
+                return
+            
+            # Check for conflicts
+            conflicts = res_repo.check_conflicts(tool_name, start_time, end_time)
+            
+            if conflicts:
+                conflict = conflicts[0]
+                await interaction.followup.send(
+                    f"Conflict! The tool is already reserved:\n"
+                    f"**{conflict.username}** at `{conflict.formatted_time}`",
+                    ephemeral=True
+                )
+                return
+            
+            # Get photo URL if provided
+            photo_url = await get_photo_url(photo)
+            
+            # Determine if photo is required
+            is_tool_room = tool.is_tool_room
+            time_until_start = (start_time - get_now(CENTRAL_TZ)).total_seconds() / 60
+            photo_required = is_tool_room
+            
+            # Create reservation
+            reservation = res_repo.create(
+                user_id=user.user_id,
+                username=user.username,
+                tool_name=tool_name,
+                start_time=start_time,
+                end_time=end_time,
+                original_text=time,
+                formatted_time=formatted_time,
+                status=ReservationStatusEnum.ACTIVE,
+                photo_required=photo_required
+            )
+            
+            # Add start photo if provided
+            if photo_url:
+                photo_repo = ReservationPhotoRepository(session)
+                photo_repo.add_photo(
+                    reservation_id=reservation.id,
+                    photo_type=PhotoTypeEnum.START,
+                    photo_url=photo_url,
+                    user_id=user.user_id,
+                    username=user.username,
+                    tool_name=tool_name
+                )
+            
+            session.commit()
+            
+            # Prepare response
+            photo_note = ""
+            if photo_required and not photo_url:
+                photo_note = (
+                    f"\n\n⚠️ **Photo Required:** This is a Tool Room reservation. "
+                    f"The user must send a photo via DM before the reservation starts "
+                    f"(or within 10 minutes after start)."
+                )
+            
+            message = (
+                f"✅ Created reservation on behalf of **{username}**\n\n"
+                f"**Tool:** {tool_name}\n"
+                f"**Time:** {formatted_time}\n"
+                f"**Duration:** {duration:.1f}h{photo_note}"
+            )
+            
+            # Attach photo if provided
+            files = []
+            if photo is not None:
+                try:
+                    files = [await photo.to_file(use_cached=True)]
+                except Exception:
+                    pass
+            
+            if files:
+                await interaction.followup.send(message, files=files)
+            else:
+                await interaction.followup.send(message)
+            
+            logger.info(f"Admin {interaction.user.name} created reservation for {username} - {tool_name} - {formatted_time}")
+
     # ========== NESTED GROUPED COMMANDS ==========
     
     # ===== /admin tool group commands =====
@@ -1798,6 +1949,22 @@ class AdminPanel(commands.Cog):
                                  choice: app_commands.Choice[str], new_value: str, merge: bool = False):
         """Adjust reservation - nested grouped version"""
         await self.adjust_time_admin(interaction, user, old_time, choice, new_value, merge)
+    
+    # ===== /admin signout command (top-level) =====
+    
+    @admin_group.command(name="signout", description="Create a reservation on behalf of a user")
+    @app_commands.describe(
+        user="Username to create reservation for",
+        tool="Tool to reserve",
+        time="Time range (e.g. 'now for 2 hours' or '3pm to 5pm')",
+        photo="Photo of the tool (if required)"
+    )
+    @app_commands.autocomplete(user=user_autocomplete, tool=tool_autocomplete)
+    @is_admin_check()
+    async def admin_signout(self, interaction: discord.Interaction, user: str, tool: str, 
+                           time: str, photo: discord.Attachment | None = None):
+        """Create reservation on behalf of user"""
+        await self.create_reservation_for_user(interaction, user, tool, time, photo)
     
     # ===== /debug logs group commands =====
     

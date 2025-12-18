@@ -469,6 +469,7 @@ class NotificationManager:
         
         warnings_sent = 0
         cancellations = 0
+        notified_debt_ids = []  # Track debts we notified in this cycle
         
         # Find active reservations that are photo_required and past start time
         # Join with photos to check for start photos
@@ -494,21 +495,26 @@ class NotificationManager:
             time_since_start = (now - start_time_aware).total_seconds() / 60
             
             # If just started (0-1 min) and no warning sent yet, send warning
-            if time_since_start <= 1 and not reservation.photo_warning_sent_at:
+            # Skip if photo reminder was already sent with the pre-reservation reminder
+            if (time_since_start <= 1 and not reservation.photo_warning_sent_at 
+                and not reservation.photo_reminder_sent_at):
                 await self._send_photo_warning(session, reservation)
                 reservation.photo_warning_sent_at = datetime.utcnow()
                 warnings_sent += 1
             
             # If past grace period (10 min), cancel reservation (only if not already being cancelled)
             elif time_since_start >= 10 and reservation.status == ReservationStatusEnum.ACTIVE:
-                await self._cancel_for_missing_photo(session, reservation, photo_debt_repo, history_repo)
+                debt_id = await self._cancel_for_missing_photo(session, reservation, photo_debt_repo, history_repo)
+                if debt_id:
+                    notified_debt_ids.append(debt_id)
                 cancellations += 1
         
         session.flush()
         
         return {
             'warnings_sent': warnings_sent,
-            'reservations_cancelled': cancellations
+            'reservations_cancelled': cancellations,
+            'notified_debt_ids': notified_debt_ids  # Return IDs of debts we already notified
         }
     
     async def _send_photo_warning(self, session: Session, reservation: ReservationModel):
@@ -540,8 +546,12 @@ class NotificationManager:
     
     async def _cancel_for_missing_photo(self, session: Session, reservation: ReservationModel,
                                        photo_debt_repo: 'PhotoDebtRepository',
-                                       history_repo: 'ReservationHistoryRepository'):
-        """Cancel reservation and create photo debt for missing start photo"""
+                                       history_repo: 'ReservationHistoryRepository') -> int:
+        """Cancel reservation and create photo debt for missing start photo
+        
+        Returns:
+            The ID of the created debt, or None if failed
+        """
         from database import ReservationStatusEnum, PhotoDebtTypeEnum
         
         try:
@@ -593,8 +603,11 @@ class NotificationManager:
             
             logger.warning(f"Cancelled reservation for {reservation.username} - {reservation.tool_name} - missing start photo")
             
+            return debt.id  # Return the debt ID so we can skip it in enforcement check
+            
         except Exception as e:
             logger.error(f"Failed to cancel reservation for missing photo: {e}", exc_info=True)
+            return None
     
     async def _notify_admin_photo_cancellation(self, reservation: ReservationModel):
         """Notify admin channel about photo cancellation"""
@@ -618,17 +631,27 @@ class NotificationManager:
         except Exception as e:
             logger.error(f"Failed to notify admin channel: {e}")
     
-    async def check_photo_debt_enforcement(self, session: Session) -> int:
-        """Check and enforce overdue photo debts"""
+    async def check_photo_debt_enforcement(self, session: Session, skip_debt_ids: list = None) -> int:
+        """Check and enforce overdue photo debts
+        
+        Args:
+            skip_debt_ids: List of debt IDs to skip (already notified in this cycle)
+        """
         from repositories import PhotoDebtRepository
         
         now = get_now(CENTRAL_TZ)
         photo_debt_repo = PhotoDebtRepository(session)
         blocked_count = 0
+        skip_debt_ids = skip_debt_ids or []
         
         # Find all unresolved debts that are past due and NOT already notified
         all_debts = photo_debt_repo.get_all_active_debts()
-        overdue_debts = [d for d in all_debts if CENTRAL_TZ.localize(d.due_at) <= now and d.notified_at is None]
+        overdue_debts = [
+            d for d in all_debts 
+            if CENTRAL_TZ.localize(d.due_at) <= now 
+            and d.notified_at is None
+            and d.id not in skip_debt_ids  # Skip debts we just notified
+        ]
         
         for debt in overdue_debts:
             try:

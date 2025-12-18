@@ -28,6 +28,7 @@ As an admin, you have access to commands for:
 | :---- | :---- |
 | Add a new tool | `/admin tool add tool:<name>` |
 | Block a tool for maintenance | `/admin block add tool:<select> time:<range>` |
+| Sign out tool for user | `/admin signout user:<name> tool:<name> time:<range>` |
 | Clear all reservations | `/admin reservation clear` |
 | Force return a reservation | `/admin reservation forcereturn` |
 | Assign tool access to user | `/admin role assign user:<name>` |
@@ -156,6 +157,43 @@ Select the block from the autocomplete list and it will be immediately removed.
 ---
 
 ## Managing Reservations
+
+### Sign Out Tool on Behalf of User
+
+```
+/admin signout user:<username> tool:<tool_name> time:<range> photo:<optional>
+```
+
+**Parameters:**
+- `user`: Username to create reservation for (autocomplete)
+- `tool`: Tool to reserve (autocomplete dropdown)
+- `time`: Natural language time range (e.g., "now for 2 hours", "tomorrow 3pm-5pm")
+- `photo`: Optional photo attachment (required for Tool Room if starting soon)
+
+**What happens:**
+- Creates reservation as if the user had signed out themselves
+- Validates user exists in database (they must have used bot at least once)
+- Checks for conflicts with existing reservations
+- Respects maximum time limits
+- Applies Tool Room photo requirements if applicable
+- Does NOT bypass role requirements or consecutive limits
+
+**Example:**
+```
+/admin signout user:john tool:laser-cutter time:tomorrow 2pm for 3 hours
+```
+
+**Use cases:**
+- Signing out tools for users without Discord access
+- Creating reservations for events or classes
+- Helping users who are having technical difficulties
+- Reserving tools for scheduled maintenance by specific staff
+
+**Notes:**
+- User must exist in database (have used the bot before)
+- Tool must exist (create with `/admin tool add` if needed)
+- Admin still needs appropriate tool role if role_required is enabled
+- For Tool Room tools, photo may be required depending on start time
 
 ### Clear All Reservations
 
@@ -716,6 +754,7 @@ Enable to stream logs in real-time to the current channel. Disable to stop strea
 - `/admin role sync` - Create missing tool roles
 
 ### Reservations
+- `/admin signout` - Create reservation on behalf of user
 - `/admin reservation clear` - Cancel all reservations
 - `/admin reservation forcereturn` - Force return active reservation
 - `/adjusttime_admin` - Modify user's reservation time

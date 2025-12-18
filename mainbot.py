@@ -183,8 +183,9 @@ async def notification_check_task():
             # Check for photo grace period enforcement
             photo_results = await notification_manager.check_photo_grace_periods(session)
             
-            # Check for overdue photo debts
-            blocked_count = await notification_manager.check_photo_debt_enforcement(session)
+            # Check for overdue photo debts (skip ones we just notified above)
+            notified_debt_ids = photo_results.get('notified_debt_ids', [])
+            blocked_count = await notification_manager.check_photo_debt_enforcement(session, skip_debt_ids=notified_debt_ids)
             
             session.commit()
             
@@ -1055,7 +1056,8 @@ async def admin_help_cmd(interaction: discord.Interaction):
         value=(
             "`/admin reservation clear` - Clear all for current tool\n"
             "`/admin reservation forcereturn` - Force return current\n"
-            "`/admin reservation adjust` - Edit another user's reservation\n\n"
+            "`/admin reservation adjust` - Edit another user's reservation\n"
+            "`/admin signout user:<name> tool:<name> time:<range>` - Create reservation for user\n\n"
             "*Old commands still work: /clearreservations, /forcereturn, /adjusttime_admin*"
         ),
         inline=False
