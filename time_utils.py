@@ -23,6 +23,49 @@ def get_now(tz: Optional[pytz.tzinfo] = None) -> datetime.datetime:
     return datetime.datetime.now(tz)
 
 
+def get_now_naive() -> datetime.datetime:
+    """Get current time as a naive datetime (no timezone info).
+    
+    Useful for database comparisons where datetimes are stored as naive.
+    Returns the current time in CENTRAL_TZ with timezone info stripped.
+    """
+    return get_now(CENTRAL_TZ).replace(tzinfo=None)
+
+
+def to_naive(dt: datetime.datetime) -> datetime.datetime:
+    """Strip timezone info from a datetime.
+    
+    Args:
+        dt: Datetime to convert (may be naive or aware)
+    
+    Returns:
+        Naive datetime with tzinfo removed
+    """
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def to_aware(dt: datetime.datetime, tz: Optional[pytz.tzinfo] = None) -> datetime.datetime:
+    """Add timezone info to a naive datetime.
+    
+    Args:
+        dt: Naive datetime to localize
+        tz: Timezone to use (defaults to CENTRAL_TZ)
+    
+    Returns:
+        Timezone-aware datetime
+    
+    Note:
+        If dt is already aware, returns it unchanged.
+    """
+    if tz is None:
+        tz = CENTRAL_TZ
+    
+    if dt.tzinfo is not None:
+        return dt
+    
+    return tz.localize(dt)
+
+
 def format_datetime(dt: datetime.datetime) -> str:
     """Format datetime to standard string format"""
     return dt.strftime(TIME_FORMAT)

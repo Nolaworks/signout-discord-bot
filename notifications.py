@@ -13,7 +13,8 @@ from database import (
     NotificationPreferencesModel, WaitlistModel, NotificationLogModel,
     ReservationModel, ReservationStatusEnum
 )
-from time_utils import get_now, CENTRAL_TZ
+from time_utils import get_now, get_now_naive, to_naive, to_aware, CENTRAL_TZ
+from discord_utils import send_dm, send_admin_channel_message
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,8 @@ class NotificationManager:
         
         # Find reservations starting in the next 15-20 minutes (window to avoid duplicates)
         # Convert to naive for database comparison (database stores naive times)
-        reminder_start = (now + timedelta(minutes=15)).replace(tzinfo=None)
-        reminder_end = (now + timedelta(minutes=20)).replace(tzinfo=None)
+        reminder_start = to_naive(now + timedelta(minutes=15))
+        reminder_end = to_naive(now + timedelta(minutes=20))
         
         upcoming_reservations = session.query(ReservationModel).filter(
             ReservationModel.status == ReservationStatusEnum.ACTIVE,
@@ -77,7 +78,7 @@ class NotificationManager:
                 NotificationLogModel.user_id == reservation.user_id,
                 NotificationLogModel.reservation_id == reservation.id,
                 NotificationLogModel.notification_type == 'reminder',
-                NotificationLogModel.sent_at >= (now - timedelta(minutes=30)).replace(tzinfo=None)
+                NotificationLogModel.sent_at >= to_naive(now - timedelta(minutes=30))
             ).first()
             
             if recent_reminder:
@@ -92,43 +93,44 @@ class NotificationManager:
     
     async def send_reservation_reminder(self, session: Session, reservation: ReservationModel):
         """Send a DM reminder about an upcoming reservation"""
-        try:
-            user = await self.bot.fetch_user(int(reservation.user_id))
-            
-            # Localize naive datetime to CENTRAL_TZ
-            start_time_aware = CENTRAL_TZ.localize(reservation.start_time)
-            time_until = start_time_aware - get_now(CENTRAL_TZ)
-            minutes = int(time_until.total_seconds() / 60)
-            
-            # Check if photo is required but missing
-            photo_warning = ""
-            start_photos = [p for p in reservation.photos if p.photo_type.value == 'start']
-            if reservation.photo_required and not start_photos:
-                photo_warning = (
-                    "\n\n**IMPORTANT: Photo Required**\n"
-                    "This Tool Room reservation requires a photo. You must send a photo of the tool "
-                    "to this bot via DM before your reservation starts, or it will be cancelled.\n\n"
-                    "Reply to this message with a photo of the tool within the next 25 minutes."
-                )
-                # Mark that photo reminder was sent
-                reservation.photo_reminder_sent_at = datetime.utcnow()
-            
-            embed = discord.Embed(
-                title="Reservation Reminder",
-                description=f"Your reservation for **{reservation.tool_name}** starts in **{minutes} minutes**!{photo_warning}",
-                color=discord.Color.orange() if photo_warning else discord.Color.blue()
+        # Localize naive datetime to CENTRAL_TZ
+        start_time_aware = to_aware(reservation.start_time)
+        time_until = start_time_aware - get_now(CENTRAL_TZ)
+        minutes = int(time_until.total_seconds() / 60)
+        
+        # Check if photo is required but missing
+        photo_warning = ""
+        start_photos = [p for p in reservation.photos if p.photo_type.value == 'start']
+        if reservation.photo_required and not start_photos:
+            photo_warning = (
+                "\n\n**IMPORTANT: Photo Required**\n"
+                "This Tool Room reservation requires a photo. You must send a photo of the tool "
+                "to this bot via DM before your reservation starts, or it will be cancelled.\n\n"
+                "Reply to this message with a photo of the tool within the next 25 minutes."
             )
-            embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
-            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-            
-            # Use first start photo if available
-            if start_photos:
-                embed.set_thumbnail(url=start_photos[0].photo_url)
-            
-            embed.set_footer(text="Use /returntool when you're done | /notifyprefs to adjust settings")
-            
-            await user.send(embed=embed)
-            
+            # Mark that photo reminder was sent
+            reservation.photo_reminder_sent_at = datetime.utcnow()
+        
+        embed = discord.Embed(
+            title="Reservation Reminder",
+            description=f"Your reservation for **{reservation.tool_name}** starts in **{minutes} minutes**!{photo_warning}",
+            color=discord.Color.orange() if photo_warning else discord.Color.blue()
+        )
+        embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        
+        # Use first start photo if available
+        if start_photos:
+            embed.set_thumbnail(url=start_photos[0].photo_url)
+        
+        embed.set_footer(text="Use /returntool when you're done | /notifyprefs to adjust settings")
+        
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"reminder for {reservation.tool_name}"
+        )
+        
+        if result.success:
             # Log success
             log_entry = NotificationLogModel(
                 user_id=reservation.user_id,
@@ -140,17 +142,12 @@ class NotificationManager:
             )
             session.add(log_entry)
             session.flush()
-            
             logger.info(f"Sent reminder to {reservation.username} for {reservation.tool_name}")
-            
-        except discord.Forbidden:
-            logger.warning(f"Cannot DM user {reservation.user_id} - DMs disabled")
-            self._log_notification_failure(session, reservation.user_id, 'reminder', 
-                                          reservation.tool_name, reservation.id, "User has DMs disabled")
-        except Exception as e:
-            logger.error(f"Failed to send reminder: {e}", exc_info=True)
-            self._log_notification_failure(session, reservation.user_id, 'reminder',
-                                          reservation.tool_name, reservation.id, str(e))
+        else:
+            self._log_notification_failure(
+                session, reservation.user_id, 'reminder',
+                reservation.tool_name, reservation.id, result.error_message
+            )
     
     # ========== Expiration Warnings ==========
     
@@ -161,8 +158,8 @@ class NotificationManager:
         
         # Find reservations ending in the next 15-20 minutes
         # Convert to naive for database comparison (database stores naive times)
-        warning_start = (now + timedelta(minutes=15)).replace(tzinfo=None)
-        warning_end = (now + timedelta(minutes=20)).replace(tzinfo=None)
+        warning_start = to_naive(now + timedelta(minutes=15))
+        warning_end = to_naive(now + timedelta(minutes=20))
         
         expiring_reservations = session.query(ReservationModel).filter(
             ReservationModel.status == ReservationStatusEnum.ACTIVE,
@@ -185,7 +182,7 @@ class NotificationManager:
                 NotificationLogModel.user_id == reservation.user_id,
                 NotificationLogModel.reservation_id == reservation.id,
                 NotificationLogModel.notification_type == 'expiration',
-                NotificationLogModel.sent_at >= (now - timedelta(minutes=30)).replace(tzinfo=None)
+                NotificationLogModel.sent_at >= to_naive(now - timedelta(minutes=30))
             ).first()
             
             if recent_warning:
@@ -200,35 +197,36 @@ class NotificationManager:
     
     async def send_expiration_warning(self, session: Session, reservation: ReservationModel):
         """Send a DM warning about an expiring reservation"""
-        try:
-            user = await self.bot.fetch_user(int(reservation.user_id))
-            
-            # Localize naive datetime to CENTRAL_TZ
-            end_time_aware = CENTRAL_TZ.localize(reservation.end_time)
-            time_until = end_time_aware - get_now(CENTRAL_TZ)
-            minutes = int(time_until.total_seconds() / 60)
-            
-            embed = discord.Embed(
-                title="Reservation Expiring Soon",
-                description=f"Your reservation for **{reservation.tool_name}** expires in **{minutes} minutes**!",
-                color=discord.Color.orange()
-            )
-            embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
-            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-            embed.add_field(
-                name="Action Required",
-                value="Return the tool or use /adjusttime to extend if no conflicts exist.",
-                inline=False
-            )
-            
-            # Use first available photo
-            if reservation.photos:
-                embed.set_thumbnail(url=reservation.photos[0].photo_url)
-            
-            embed.set_footer(text="Use /returntool to return early | /adjusttime to extend")
-            
-            await user.send(embed=embed)
-            
+        # Localize naive datetime to CENTRAL_TZ
+        end_time_aware = to_aware(reservation.end_time)
+        time_until = end_time_aware - get_now(CENTRAL_TZ)
+        minutes = int(time_until.total_seconds() / 60)
+        
+        embed = discord.Embed(
+            title="Reservation Expiring Soon",
+            description=f"Your reservation for **{reservation.tool_name}** expires in **{minutes} minutes**!",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.add_field(
+            name="Action Required",
+            value="Return the tool or use /adjusttime to extend if no conflicts exist.",
+            inline=False
+        )
+        
+        # Use first available photo
+        if reservation.photos:
+            embed.set_thumbnail(url=reservation.photos[0].photo_url)
+        
+        embed.set_footer(text="Use /returntool to return early | /adjusttime to extend")
+        
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"expiration warning for {reservation.tool_name}"
+        )
+        
+        if result.success:
             # Log success
             log_entry = NotificationLogModel(
                 user_id=reservation.user_id,
@@ -240,17 +238,12 @@ class NotificationManager:
             )
             session.add(log_entry)
             session.flush()
-            
             logger.info(f"Sent expiration warning to {reservation.username} for {reservation.tool_name}")
-            
-        except discord.Forbidden:
-            logger.warning(f"Cannot DM user {reservation.user_id} - DMs disabled")
-            self._log_notification_failure(session, reservation.user_id, 'expiration',
-                                          reservation.tool_name, reservation.id, "User has DMs disabled")
-        except Exception as e:
-            logger.error(f"Failed to send expiration warning: {e}", exc_info=True)
-            self._log_notification_failure(session, reservation.user_id, 'expiration',
-                                          reservation.tool_name, reservation.id, str(e))
+        else:
+            self._log_notification_failure(
+                session, reservation.user_id, 'expiration',
+                reservation.tool_name, reservation.id, result.error_message
+            )
     
     # ========== Waitlist System ==========
     
@@ -328,34 +321,35 @@ class NotificationManager:
     
     async def send_waitlist_notification(self, session: Session, waitlist_entry: WaitlistModel):
         """Notify a user that a waitlisted tool is available"""
-        try:
-            # Check if user wants waitlist notifications
-            prefs = self.get_preferences(session, waitlist_entry.user_id)
-            if not prefs.waitlist_alerts_enabled:
-                # Mark as notified so we don't check again
-                waitlist_entry.notified_at = get_now(CENTRAL_TZ)
-                session.flush()
-                return
-            
-            user = await self.bot.fetch_user(int(waitlist_entry.user_id))
-            
-            embed = discord.Embed(
-                title="Tool Available!",
-                description=f"**{waitlist_entry.tool_name}** is now available!",
-                color=discord.Color.green()
-            )
-            embed.add_field(
-                name="Reserve Now",
-                value=f"Go to the #signout-{waitlist_entry.tool_name} channel and use /signout",
-                inline=False
-            )
-            embed.set_footer(text="First come, first served!")
-            
-            await user.send(embed=embed)
-            
-            # Mark as notified
+        # Check if user wants waitlist notifications
+        prefs = self.get_preferences(session, waitlist_entry.user_id)
+        if not prefs.waitlist_alerts_enabled:
+            # Mark as notified so we don't check again
             waitlist_entry.notified_at = get_now(CENTRAL_TZ)
-            
+            session.flush()
+            return
+        
+        embed = discord.Embed(
+            title="Tool Available!",
+            description=f"**{waitlist_entry.tool_name}** is now available!",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="Reserve Now",
+            value=f"Go to the #signout-{waitlist_entry.tool_name} channel and use /signout",
+            inline=False
+        )
+        embed.set_footer(text="First come, first served!")
+        
+        result = await send_dm(
+            self.bot, waitlist_entry.user_id, embed=embed,
+            log_context=f"waitlist notification for {waitlist_entry.tool_name}"
+        )
+        
+        # Mark as notified regardless of success (to avoid spam)
+        waitlist_entry.notified_at = get_now(CENTRAL_TZ)
+        
+        if result.success:
             # Log success
             log_entry = NotificationLogModel(
                 user_id=waitlist_entry.user_id,
@@ -366,18 +360,12 @@ class NotificationManager:
             )
             session.add(log_entry)
             session.flush()
-            
             logger.info(f"Sent waitlist notification to {waitlist_entry.username} for {waitlist_entry.tool_name}")
-            
-        except discord.Forbidden:
-            logger.warning(f"Cannot DM user {waitlist_entry.user_id} - DMs disabled")
-            waitlist_entry.notified_at = get_now(CENTRAL_TZ)
-            self._log_notification_failure(session, waitlist_entry.user_id, 'waitlist',
-                                          waitlist_entry.tool_name, None, "User has DMs disabled")
-        except Exception as e:
-            logger.error(f"Failed to send waitlist notification: {e}", exc_info=True)
-            self._log_notification_failure(session, waitlist_entry.user_id, 'waitlist',
-                                          waitlist_entry.tool_name, None, str(e))
+        else:
+            self._log_notification_failure(
+                session, waitlist_entry.user_id, 'waitlist',
+                waitlist_entry.tool_name, None, result.error_message
+            )
     
     # ========== Admin Notifications ==========
     
@@ -413,30 +401,28 @@ class NotificationManager:
             func.count(ReservationModel.id).desc()
         ).limit(5).all()
         
+        # Build embed once (same for all admins)
+        embed = discord.Embed(
+            title="Daily Tool Usage Summary",
+            description=f"Statistics for {yesterday.strftime('%B %d, %Y')}",
+            color=discord.Color.purple()
+        )
+        embed.add_field(name="New Reservations (24h)", value=str(total_reservations), inline=True)
+        embed.add_field(name="Currently Active", value=str(active_reservations), inline=True)
+        embed.add_field(name="Overdue", value=str(overdue_reservations), inline=True)
+        
+        if popular_tools:
+            tools_list = "\n".join([f"{i+1}. {tool[0]} ({tool[1]} reservations)" 
+                                   for i, tool in enumerate(popular_tools)])
+            embed.add_field(name="Most Popular Tools", value=tools_list, inline=False)
+        
+        embed.set_footer(text="Generated daily at 9:00 AM")
+        
         # Send to each admin
         for admin_id in admin_user_ids:
-            try:
-                user = await self.bot.fetch_user(int(admin_id))
-                
-                embed = discord.Embed(
-                    title="Daily Tool Usage Summary",
-                    description=f"Statistics for {yesterday.strftime('%B %d, %Y')}",
-                    color=discord.Color.purple()
-                )
-                embed.add_field(name="New Reservations (24h)", value=str(total_reservations), inline=True)
-                embed.add_field(name="Currently Active", value=str(active_reservations), inline=True)
-                embed.add_field(name="Overdue", value=str(overdue_reservations), inline=True)
-                
-                if popular_tools:
-                    tools_list = "\n".join([f"{i+1}. {tool[0]} ({tool[1]} reservations)" 
-                                           for i, tool in enumerate(popular_tools)])
-                    embed.add_field(name="Most Popular Tools", value=tools_list, inline=False)
-                
-                embed.set_footer(text="Generated daily at 9:00 AM")
-                
-                await user.send(embed=embed)
-                
-                # Log success
+            result = await send_dm(self.bot, admin_id, embed=embed, log_context="daily summary")
+            
+            if result.success:
                 log_entry = NotificationLogModel(
                     user_id=admin_id,
                     notification_type='admin_summary',
@@ -444,15 +430,8 @@ class NotificationManager:
                     success=True
                 )
                 session.add(log_entry)
-                
-                logger.info(f"Sent daily summary to admin {admin_id}")
-                
-            except discord.Forbidden:
-                logger.warning(f"Cannot DM admin {admin_id} - DMs disabled")
-                self._log_notification_failure(session, admin_id, 'admin_summary', None, None, "User has DMs disabled")
-            except Exception as e:
-                logger.error(f"Failed to send daily summary to admin {admin_id}: {e}", exc_info=True)
-                self._log_notification_failure(session, admin_id, 'admin_summary', None, None, str(e))
+            else:
+                self._log_notification_failure(session, admin_id, 'admin_summary', None, None, result.error_message)
         
         session.flush()
     
@@ -485,13 +464,13 @@ class NotificationManager:
             ReservationModel.status == ReservationStatusEnum.ACTIVE,
             ReservationModel.photo_required == True,
             ReservationPhotoModel.id.is_(None),  # No start photo exists
-            ReservationModel.start_time <= now.replace(tzinfo=None)
+            ReservationModel.start_time <= to_naive(now)
         )
         
         active_reservations = active_reservations_query.all()
         
         for reservation in active_reservations:
-            start_time_aware = CENTRAL_TZ.localize(reservation.start_time)
+            start_time_aware = to_aware(reservation.start_time)
             time_since_start = (now - start_time_aware).total_seconds() / 60
             
             # If just started (0-1 min) and no warning sent yet, send warning
@@ -519,30 +498,27 @@ class NotificationManager:
     
     async def _send_photo_warning(self, session: Session, reservation: ReservationModel):
         """Send warning that reservation will be cancelled without photo"""
-        try:
-            user = await self.bot.fetch_user(int(reservation.user_id))
-            
-            embed = discord.Embed(
-                title="Photo Required - Reservation at Risk",
-                description=(
-                    f"Your reservation for **{reservation.tool_name}** has started, "
-                    f"but you haven't provided the required photo yet.\n\n"
-                    f"**You have 10 minutes to send a photo to this bot via DM, "
-                    f"or your reservation will be cancelled**\n\n"
-                    f"Simply reply to this message with a photo of the tool."
-                ),
-                color=discord.Color.red()
-            )
-            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-            embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
-            embed.set_footer(text="Photo must show the tool/workspace")
-            
-            await user.send(embed=embed)
-            
+        embed = discord.Embed(
+            title="Photo Required - Reservation at Risk",
+            description=(
+                f"Your reservation for **{reservation.tool_name}** has started, "
+                f"but you haven't provided the required photo yet.\n\n"
+                f"**You have 10 minutes to send a photo to this bot via DM, "
+                f"or your reservation will be cancelled**\n\n"
+                f"Simply reply to this message with a photo of the tool."
+            ),
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
+        embed.set_footer(text="Photo must show the tool/workspace")
+        
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"photo warning for {reservation.tool_name}"
+        )
+        if result.success:
             logger.info(f"Sent photo warning to {reservation.username} for {reservation.tool_name}")
-            
-        except Exception as e:
-            logger.error(f"Failed to send photo warning: {e}", exc_info=True)
     
     async def _cancel_for_missing_photo(self, session: Session, reservation: ReservationModel,
                                        photo_debt_repo: 'PhotoDebtRepository',
@@ -580,23 +556,25 @@ class NotificationManager:
             debt.notified_at = datetime.utcnow()
             
             # Notify user
-            user = await self.bot.fetch_user(int(reservation.user_id))
             embed = discord.Embed(
                 title="Reservation Cancelled - Photo Not Provided",
                 description=(
                     f"**Photo or it didn't happen!**\n\n"
-                    f"We had to cancel your **{reservation.tool_name}** reservation because apparently "
-                    f"taking a photo is harder than we thought.\n\n"
-                    f"**The Tool Room now considers you a flight risk.** Your tool privileges have been "
-                    f"temporarily relocated to the Shadow Realm.\n\n"
-                    f"Summon a shop leader to discuss your path to redemption."
+                    f"Your **{reservation.tool_name}** reservation has been cacelled "
+                    f"due to no start photo provided.\n\n"
+                    f"**Your tool privileges have been "
+                    f"temporarily disabled so you won't be able to make new reservations until your photo debt is cleared.**\n\n"
+                    f"Please speak to a shop leader asap."
                 ),
                 color=discord.Color.dark_red()
             )
             embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
             embed.set_footer(text="Shop leaders can clear photo debts with /clearphotodebt")
             
-            await user.send(embed=embed)
+            await send_dm(
+                self.bot, reservation.user_id, embed=embed,
+                log_context=f"photo cancellation for {reservation.tool_name}"
+            )
             
             # Notify admin channel
             await self._notify_admin_photo_cancellation(reservation)
@@ -611,25 +589,16 @@ class NotificationManager:
     
     async def _notify_admin_photo_cancellation(self, reservation: ReservationModel):
         """Notify admin channel about photo cancellation"""
-        try:
-            import config
-            if not config.admin_channel_id:
-                return
-            
-            channel = self.bot.get_channel(int(config.admin_channel_id))
-            if not channel:
-                return
-            
-            await channel.send(
+        await send_admin_channel_message(
+            self.bot,
+            content=(
                 f"**Reservation Auto-Cancelled - Missing Photo**\n"
                 f"User: {reservation.username}\n"
                 f"Tool: {reservation.tool_name}\n"
                 f"Time: {reservation.formatted_time}\n"
                 f"Reason: No start photo provided within grace period"
             )
-            
-        except Exception as e:
-            logger.error(f"Failed to notify admin channel: {e}")
+        )
     
     async def check_photo_debt_enforcement(self, session: Session, skip_debt_ids: list = None) -> int:
         """Check and enforce overdue photo debts
@@ -648,31 +617,32 @@ class NotificationManager:
         all_debts = photo_debt_repo.get_all_active_debts()
         overdue_debts = [
             d for d in all_debts 
-            if CENTRAL_TZ.localize(d.due_at) <= now 
+            if to_aware(d.due_at) <= now 
             and d.notified_at is None
             and d.id not in skip_debt_ids  # Skip debts we just notified
         ]
         
         for debt in overdue_debts:
-            try:
-                user = await self.bot.fetch_user(int(debt.user_id))
-                
-                embed = discord.Embed(
-                    title="Blocked from Tool Room - Missing Photo",
-                    description=(
-                        f"**Photo or it didn't happen!**\n\n"
-                        f"You have an outstanding photo debt for **{debt.tool_name}**.\n\n"
-                        f"**The Tool Room now considers you a flight risk.** Your tool privileges have been "
-                        f"temporarily relocated to the Shadow Realm.\n\n"
-                        f"Summon a shop leader to discuss your path to redemption."
-                    ),
-                    color=discord.Color.dark_red()
-                )
-                embed.add_field(name="Tool", value=debt.tool_name, inline=True)
-                embed.set_footer(text="This restriction will remain until an admin clears the debt")
-                
-                await user.send(embed=embed)
-                
+            embed = discord.Embed(
+                title="Blocked from Tool Room - Missing Photo",
+                description=(
+                    f"**Photo or it didn't happen!**\n\n"
+                    f"You have an outstanding photo debt for **{debt.tool_name}**.\n\n"
+                    f"**The Tool Room now considers you a flight risk.** Your tool privileges have been "
+                    f"temporarily relocated to the Shadow Realm.\n\n"
+                    f"Summon a shop leader to discuss your path to redemption."
+                ),
+                color=discord.Color.dark_red()
+            )
+            embed.add_field(name="Tool", value=debt.tool_name, inline=True)
+            embed.set_footer(text="This restriction will remain until an admin clears the debt")
+            
+            result = await send_dm(
+                self.bot, debt.user_id, embed=embed,
+                log_context=f"photo debt enforcement for {debt.tool_name}"
+            )
+            
+            if result.success:
                 # Mark debt as notified so we don't spam the user
                 debt.notified_at = datetime.utcnow()
                 session.commit()
@@ -682,24 +652,14 @@ class NotificationManager:
                 
                 blocked_count += 1
                 logger.warning(f"Photo debt enforced - blocked {debt.username} from Tool Room")
-                
-            except Exception as e:
-                logger.error(f"Failed to notify user about photo debt enforcement: {e}", exc_info=True)
         
         return blocked_count
     
     async def _notify_admin_photo_debt_enforced(self, debt: 'PhotoDebtModel'):
         """Notify admin channel that user is blocked for photo debt"""
-        try:
-            import config
-            if not config.admin_channel_id:
-                return
-            
-            channel = self.bot.get_channel(int(config.admin_channel_id))
-            if not channel:
-                return
-            
-            await channel.send(
+        await send_admin_channel_message(
+            self.bot,
+            content=(
                 f"**User Blocked from Tool Room - Photo Debt**\n"
                 f"User: {debt.username}\n"
                 f"Tool: {debt.tool_name}\n"
@@ -708,9 +668,7 @@ class NotificationManager:
                 f"Due: {debt.due_at.strftime('%Y-%m-%d %H:%M')}\n\n"
                 f"User will remain blocked until photo is provided or admin clears debt."
             )
-            
-        except Exception as e:
-            logger.error(f"Failed to notify admin channel about photo debt: {e}")
+        )
     
     # ========== Utility Methods ==========
     

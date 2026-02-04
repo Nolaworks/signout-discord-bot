@@ -17,7 +17,8 @@ from time_utils import parse_time_range, get_now, calculate_duration_hours, CENT
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
     user_is_admin, user_is_developer, get_user_display_name, get_user_id,
-    validate_photo_requirement, get_photo_url, is_tool_room_channel
+    validate_photo_requirement, get_photo_url, is_tool_room_channel,
+    send_dm, send_admin_channel_message, requires_tool_channel, validate_tool_channel
 )
 from validation import validate_time_input, validate_comment
 from exceptions import InvalidToolChannelError, ReservationConflictError
@@ -98,19 +99,20 @@ async def clean_expired_signouts():
                             )
                             
                             # Send DM requesting return photo
-                            try:
-                                user = await bot.fetch_user(int(reservation.user_id))
-                                if user:
-                                    await user.send(
-                                        f"**Your {reservation.tool_name} reservation has ended.**\n\n"
-                                        f"Please send a photo of the tool via DM to complete your return.\n"
-                                        f"You have **30 minutes** to submit the return photo, or you will be blocked from Tool Room signouts.\n\n"
-                                        f"Reservation: `{reservation.formatted_time}`\n\n"
-                                        f"*Simply attach the photo in this DM conversation.*"
-                                    )
-                                    logger.info(f"Sent return photo request DM: {reservation.username} - {reservation.tool_name}")
-                            except Exception as e:
-                                logger.error(f"Failed to send return photo DM to {reservation.username}: {e}")
+                            result = await send_dm(
+                                bot,
+                                reservation.user_id,
+                                content=(
+                                    f"**Your {reservation.tool_name} reservation has ended.**\n\n"
+                                    f"Please send a photo of the tool via DM to complete your return.\n"
+                                    f"You have **30 minutes** to submit the return photo, or you will be blocked from Tool Room signouts.\n\n"
+                                    f"Reservation: `{reservation.formatted_time}`\n\n"
+                                    f"*Simply attach the photo in this DM conversation.*"
+                                ),
+                                log_context=f"return photo request for {reservation.tool_name}"
+                            )
+                            if result.success:
+                                logger.info(f"Sent return photo request DM: {reservation.username} - {reservation.tool_name}")
                     
                     reservation.status = ReservationStatusEnum.EXPIRED
                     logger.info(f"Marked as expired: {reservation.username} - {reservation.tool_name} (was {old_status.value})")
@@ -518,11 +520,8 @@ async def waitlist_action_autocomplete(
 @app_commands.autocomplete(action=waitlist_action_autocomplete)
 async def waitlist_command(interaction: discord.Interaction, action: str):
     """Manage waitlist for a tool"""
-    # Validate channel
-    try:
-        tool_name = get_tool_from_channel_or_error(interaction.channel)
-    except InvalidToolChannelError as e:
-        await interaction.response.send_message(e.user_message, ephemeral=True)
+    tool_name = await validate_tool_channel(interaction)
+    if tool_name is None:
         return
     
     user_id = get_user_id(interaction.user)
@@ -613,157 +612,6 @@ async def my_waitlist(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="adminsummary", description="[ADMIN] Manually send the daily notification summary")
-@app_commands.default_permissions(administrator=True)
-async def admin_summary(interaction: discord.Interaction):
-    """Manually trigger the daily admin notification summary (admin only)"""
-    if not user_is_admin(interaction.user):
-        await interaction.response.send_message(
-            "This command is restricted to administrators.",
-            ephemeral=True
-        )
-        return
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    with get_db_session() as session:
-        # Get all admin users
-        from repositories import UserRepository
-        user_repo = UserRepository(session)
-        admin_users = session.query(UserModel).filter_by(is_admin=True).all()
-        
-        # Filter out invalid user IDs (like 'admin' or 'migrated_*')
-        admin_ids = []
-        for user in admin_users:
-            try:
-                # Try to convert to int to validate it's a real Discord user ID
-                int(user.user_id)
-                admin_ids.append(user.user_id)
-            except ValueError:
-                # Skip invalid user IDs (migrated data, system users, etc.)
-                logger.warning(f"Skipping invalid admin user_id: {user.user_id}")
-        
-        if not admin_ids:
-            await interaction.followup.send(
-                "No admin users found in the database.",
-                ephemeral=True
-            )
-            return
-        
-        # Get tool role information
-        tool_repo = ToolRepository(session)
-        tools = tool_repo.get_all()
-        
-        # Build role summary
-        role_summary = []
-        tools_with_roles = []
-        
-        # Get all guild members (excluding bots) - fetch from guild to ensure we have all members
-        guild = interaction.guild
-        all_members = [m for m in guild.members if not m.bot]
-        
-        # If the member cache is empty or small, the bot may not have the members intent
-        # In that case, we'll just work with what we have in the role members
-        logger.info(f"Found {len(all_members)} non-bot members in guild cache")
-        
-        for tool in tools:
-            # Check if tool has a role (regardless of whether it's required)
-            if tool.role_id:
-                role = guild.get_role(int(tool.role_id))
-                if role:
-                    # Get member objects with this role (excluding bots)
-                    members_with_role = [m for m in role.members if not m.bot]
-                    members_with_role_names = [m.name for m in members_with_role]
-                    
-                    # If we have member cache, calculate who doesn't have the role
-                    if all_members:
-                        all_member_names = [m.name for m in all_members]
-                        members_without_role_names = [name for name in all_member_names if name not in members_with_role_names]
-                    else:
-                        # No member cache available
-                        members_without_role_names = []
-                    
-                    tools_with_roles.append({
-                        'tool': tool.name,
-                        'role': role.name,
-                        'role_required': tool.role_required,
-                        'with_role': members_with_role_names,
-                        'without_role': members_without_role_names
-                    })
-        
-        # Send summary to all admins
-        await notification_manager.send_daily_summary(session, admin_ids)
-        
-        # Also send role summary
-        for admin_id in admin_ids:
-            try:
-                admin_user = await bot.fetch_user(int(admin_id))
-                
-                if tools_with_roles:
-                    # Create embed for role summary
-                    embed = discord.Embed(
-                        title="Tool Role Access Summary",
-                        description="Overview of all tools with roles and user access",
-                        color=discord.Color.blue()
-                    )
-                    
-                    for tool_info in tools_with_roles:
-                        with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
-                        without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
-                        
-                        # Add indicator for whether role is required
-                        requirement_status = "[REQUIRED]" if tool_info['role_required'] else "[Optional]"
-                        
-                        field_value = (
-                            f"**Status:** {requirement_status}\n"
-                            f"**Has Access ({len(tool_info['with_role'])}):** {with_role_text}\n\n"
-                            f"**Needs Access ({len(tool_info['without_role'])}):** {without_role_text}"
-                        )
-                        
-                        # Discord field value limit is 1024 characters
-                        if len(field_value) > 1024:
-                            field_value = (
-                                f"**Status:** {requirement_status}\n"
-                                f"**Has Access:** {len(tool_info['with_role'])} users\n"
-                                f"**Needs Access:** {len(tool_info['without_role'])} users\n"
-                                f"(Too many to list - use Discord role view)"
-                            )
-                        
-                        embed.add_field(
-                            name=f"{tool_info['tool']}",
-                            value=field_value,
-                            inline=False
-                        )
-                    
-                    embed.set_footer(text="Use /assignrole to grant access | Use /togglerole to change requirement status")
-                    
-                    await admin_user.send(embed=embed)
-                    logger.info(f"Sent role summary to admin {admin_user.name}")
-                else:
-                    # No tools have roles
-                    embed = discord.Embed(
-                        title="Tool Role Access Summary",
-                        description="No tools have roles configured yet.",
-                        color=discord.Color.blue()
-                    )
-                    embed.set_footer(text="Use /syncroles to create roles for all tools")
-                    await admin_user.send(embed=embed)
-                    logger.info(f"Sent empty role summary to admin {admin_user.name}")
-                    
-            except discord.Forbidden:
-                logger.warning(f"Cannot send role summary to admin {admin_id} - DMs disabled")
-            except Exception as e:
-                logger.error(f"Error sending role summary to admin {admin_id}: {e}")
-        
-        session.commit()
-    
-    summary_text = f"Daily notification summary has been sent to {len(admin_ids)} admin(s)!"
-    if tools_with_roles:
-        summary_text += f"\n\nRole access summary included for {len(tools_with_roles)} tool(s) with roles."
-    
-    await interaction.followup.send(summary_text, ephemeral=True)
-
-
 @bot.tree.command(name="testnotify", description="[DEV] Test notification system with current reservations")
 @app_commands.default_permissions(administrator=True)
 async def test_notify(interaction: discord.Interaction):
@@ -834,22 +682,18 @@ async def test_notify(interaction: discord.Interaction):
         logger.info(f"Test notify: {reminder_sent} reminders, {warning_sent} warnings, {waitlist_sent} waitlist sent")
         
         # Send test notification to admin
-        try:
-            embed = discord.Embed(
-                title="Test Notification",
-                description="This is a test notification from the signout bot!",
-                color=discord.Color.blue()
-            )
-            embed.add_field(
-                name="Notification System Status",
-                value="Notifications are working properly",
-                inline=False
-            )
-            embed.set_footer(text="If you received this, your DMs are working!")
-            await interaction.user.send(embed=embed)
-            logger.info(f"Sent test notification to {interaction.user.name}")
-        except discord.Forbidden:
-            logger.warning(f"Cannot send test notification to {interaction.user.name} - DMs disabled")
+        embed = discord.Embed(
+            title="Test Notification",
+            description="This is a test notification from the signout bot!",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="Notification System Status",
+            value="Notifications are working properly",
+            inline=False
+        )
+        embed.set_footer(text="If you received this, your DMs are working!")
+        await send_dm(bot, interaction.user.id, embed=embed, log_context="test notification")
     
     details_text = "\n".join(reservation_details[:10])  # Limit to 10
     if len(reservation_details) > 10:
@@ -1182,10 +1026,8 @@ async def reservations(interaction: discord.Interaction):
     """Display all active reservations for the current tool"""
     await interaction.response.defer(thinking=True)
     
-    try:
-        tool_name = get_tool_from_channel_or_error(interaction.channel)
-    except InvalidToolChannelError as e:
-        await interaction.followup.send(e.user_message, ephemeral=True)
+    tool_name = await validate_tool_channel(interaction, deferred=True)
+    if tool_name is None:
         return
     
     with get_db_session() as session:
@@ -1217,11 +1059,8 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
     # Note: Photo validation happens AFTER we parse the time
     # to allow future reservations without immediate photo requirement
     
-    # Validate channel
-    try:
-        tool_name = get_tool_from_channel_or_error(interaction.channel)
-    except InvalidToolChannelError as e:
-        await interaction.response.send_message(e.user_message, ephemeral=True)
+    tool_name = await validate_tool_channel(interaction)
+    if tool_name is None:
         return
     
     # Validate time input
@@ -1443,11 +1282,8 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
 @app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
 async def cancel_reservation(interaction: discord.Interaction, reservation: str):
     """Cancel a tool reservation"""
-    # Validate channel
-    try:
-        tool_name = get_tool_from_channel_or_error(interaction.channel)
-    except InvalidToolChannelError as e:
-        await interaction.response.send_message(e.user_message, ephemeral=True)
+    tool_name = await validate_tool_channel(interaction)
+    if tool_name is None:
         return
     
     user_id = get_user_id(interaction.user)
@@ -1498,11 +1334,8 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
     """Return a tool reservation"""
     # Note: Tool Room tools require return photo via DM, not in channel
     
-    # Validate channel
-    try:
-        tool_name = get_tool_from_channel_or_error(interaction.channel)
-    except InvalidToolChannelError as e:
-        await interaction.response.send_message(e.user_message, ephemeral=True)
+    tool_name = await validate_tool_channel(interaction)
+    if tool_name is None:
         return
     
     user_id = get_user_id(interaction.user)
@@ -1675,6 +1508,7 @@ async def on_ready():
         
         logger.info("Initializing notification manager...")
         notification_manager = NotificationManager(bot)
+        bot.notification_manager = notification_manager  # Make accessible to cogs
         
         logger.info("Loading admin panel...")
         await bot.add_cog(AdminPanel(bot))

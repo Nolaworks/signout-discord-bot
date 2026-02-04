@@ -31,7 +31,8 @@ from time_utils import (
 )
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
-    user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id
+    user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id,
+    validate_tool_channel, send_dm
 )
 from autocomplete import user_autocomplete, reservation_autocomplete
 from validation import validate_max_time_hours
@@ -141,6 +142,12 @@ class AdminPanel(commands.Cog):
         parent=admin_group
     )
     
+    debt_group = app_commands.Group(
+        name="debt",
+        description="Photo debt management",
+        parent=admin_group
+    )
+    
     # Subgroups under /debug
     logs_group = app_commands.Group(
         name="logs",
@@ -246,10 +253,8 @@ class AdminPanel(commands.Cog):
     async def _adjust_time_core(self, interaction: discord.Interaction, old_time: str, 
                                choice: str, new_value: str, user: Optional[str] = None, merge: bool = False):
         """Core logic for adjusting reservation times"""
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         # Determine target user
@@ -570,10 +575,8 @@ class AdminPanel(commands.Cog):
 
     async def set_max_time(self, interaction: discord.Interaction, hours: int):
         """Set the maximum reservation duration for the current tool"""
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         # Validate hours
@@ -602,10 +605,8 @@ class AdminPanel(commands.Cog):
 
     async def clear_reservations(self, interaction: discord.Interaction):
         """Clear all active reservations for the current tool"""
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         with get_db_session() as session:
@@ -635,10 +636,8 @@ class AdminPanel(commands.Cog):
 
     async def force_return(self, interaction: discord.Interaction):
         """Force return the first active reservation for the current tool"""
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         with get_db_session() as session:
@@ -726,11 +725,8 @@ class AdminPanel(commands.Cog):
     async def set_resignout_limit(self, interaction: discord.Interaction, max_consecutive: int, cooldown_hours: int,
                                  reset_after_hours: int = 24, min_total_hours: float = 48.0):
         """Set consecutive signout limit for a tool"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         # Validate inputs
@@ -842,11 +838,8 @@ class AdminPanel(commands.Cog):
 
     async def check_cooldowns(self, interaction: discord.Interaction):
         """Check which users are in cooldown for the current tool"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -927,11 +920,8 @@ class AdminPanel(commands.Cog):
 
     async def clear_cooldown(self, interaction: discord.Interaction, username: str):
         """Clear a user's cooldown and consecutive count"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         with get_db_session() as session:
@@ -970,11 +960,8 @@ class AdminPanel(commands.Cog):
     async def exempt_user(self, interaction: discord.Interaction, username: str, 
                          duration_hours: int = None, reason: str = None):
         """Grant a user exemption from consecutive signout limits"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         with get_db_session() as session:
@@ -1029,11 +1016,8 @@ class AdminPanel(commands.Cog):
 
     async def remove_exemption(self, interaction: discord.Interaction, username: str):
         """Remove a user's exemption from consecutive signout limits"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         with get_db_session() as session:
@@ -1076,11 +1060,8 @@ class AdminPanel(commands.Cog):
 
     async def list_exemptions(self, interaction: discord.Interaction):
         """List all users with exemptions for the current tool"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -1133,11 +1114,8 @@ class AdminPanel(commands.Cog):
 
     async def togglerole(self, interaction: discord.Interaction):
         """Toggle whether a role is required to sign out the current tool"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1192,11 +1170,8 @@ class AdminPanel(commands.Cog):
 
     async def assignrole(self, interaction: discord.Interaction, user: discord.Member):
         """Assign the current tool's role to a user"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1257,11 +1232,8 @@ class AdminPanel(commands.Cog):
 
     async def revokerole(self, interaction: discord.Interaction, user: discord.Member):
         """Remove the current tool's role from a user"""
-        # Validate channel
-        try:
-            tool_name = get_tool_from_channel_or_error(interaction.channel)
-        except InvalidToolChannelError as e:
-            await interaction.response.send_message(e.user_message, ephemeral=True)
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
             return
         
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1966,6 +1938,134 @@ class AdminPanel(commands.Cog):
         """Create reservation on behalf of user"""
         await self.create_reservation_for_user(interaction, user, tool, time, photo)
     
+    @admin_group.command(name="summary", description="Manually send the daily notification summary to admins")
+    @is_admin_check()
+    async def admin_summary(self, interaction: discord.Interaction):
+        """Manually trigger the daily admin notification summary"""
+        await interaction.response.defer(ephemeral=True)
+        
+        with get_db_session() as session:
+            # Get all admin users
+            from database import UserModel
+            admin_users = session.query(UserModel).filter_by(is_admin=True).all()
+            
+            # Filter out invalid user IDs (like 'admin' or 'migrated_*')
+            admin_ids = []
+            for user in admin_users:
+                try:
+                    # Try to convert to int to validate it's a real Discord user ID
+                    int(user.user_id)
+                    admin_ids.append(user.user_id)
+                except ValueError:
+                    # Skip invalid user IDs (migrated data, system users, etc.)
+                    logger.warning(f"Skipping invalid admin user_id: {user.user_id}")
+            
+            if not admin_ids:
+                await interaction.followup.send(
+                    "No admin users found in the database.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get tool role information
+            tool_repo = ToolRepository(session)
+            tools = tool_repo.get_all()
+            
+            # Build role summary
+            tools_with_roles = []
+            
+            # Get all guild members (excluding bots)
+            guild = interaction.guild
+            all_members = [m for m in guild.members if not m.bot]
+            
+            logger.info(f"Found {len(all_members)} non-bot members in guild cache")
+            
+            for tool in tools:
+                # Check if tool has a role (regardless of whether it's required)
+                if tool.role_id:
+                    role = guild.get_role(int(tool.role_id))
+                    if role:
+                        # Get member objects with this role (excluding bots)
+                        members_with_role = [m for m in role.members if not m.bot]
+                        members_with_role_names = [m.name for m in members_with_role]
+                        
+                        # If we have member cache, calculate who doesn't have the role
+                        if all_members:
+                            all_member_names = [m.name for m in all_members]
+                            members_without_role_names = [name for name in all_member_names if name not in members_with_role_names]
+                        else:
+                            members_without_role_names = []
+                        
+                        tools_with_roles.append({
+                            'tool': tool.name,
+                            'role': role.name,
+                            'role_required': tool.role_required,
+                            'with_role': members_with_role_names,
+                            'without_role': members_without_role_names
+                        })
+            
+            # Send summary to all admins via notification manager
+            notification_manager = getattr(self.bot, 'notification_manager', None)
+            if notification_manager:
+                await notification_manager.send_daily_summary(session, admin_ids)
+            else:
+                logger.warning("Notification manager not available")
+            
+            # Also send role summary
+            for admin_id in admin_ids:
+                if tools_with_roles:
+                    embed = discord.Embed(
+                        title="Tool Role Access Summary",
+                        description="Overview of all tools with roles and user access",
+                        color=discord.Color.blue()
+                    )
+                    
+                    for tool_info in tools_with_roles:
+                        with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
+                        without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
+                        
+                        requirement_status = "[REQUIRED]" if tool_info['role_required'] else "[Optional]"
+                        
+                        field_value = (
+                            f"**Status:** {requirement_status}\n"
+                            f"**Has Access ({len(tool_info['with_role'])}):** {with_role_text}\n\n"
+                            f"**Needs Access ({len(tool_info['without_role'])}):** {without_role_text}"
+                        )
+                        
+                        # Discord field value limit is 1024 characters
+                        if len(field_value) > 1024:
+                            field_value = (
+                                f"**Status:** {requirement_status}\n"
+                                f"**Has Access:** {len(tool_info['with_role'])} users\n"
+                                f"**Needs Access:** {len(tool_info['without_role'])} users\n"
+                                f"(Too many to list - use Discord role view)"
+                            )
+                        
+                        embed.add_field(
+                            name=f"{tool_info['tool']}",
+                            value=field_value,
+                            inline=False
+                        )
+                    
+                    embed.set_footer(text="Use /assignrole to grant access | Use /togglerole to change requirement status")
+                else:
+                    embed = discord.Embed(
+                        title="Tool Role Access Summary",
+                        description="No tools have roles configured yet.",
+                        color=discord.Color.blue()
+                    )
+                    embed.set_footer(text="Use /syncroles to create roles for all tools")
+                
+                await send_dm(self.bot, admin_id, embed=embed, log_context="role summary")
+            
+            session.commit()
+        
+        summary_text = f"Daily notification summary has been sent to {len(admin_ids)} admin(s)!"
+        if tools_with_roles:
+            summary_text += f"\n\nRole access summary included for {len(tools_with_roles)} tool(s) with roles."
+        
+        await interaction.followup.send(summary_text, ephemeral=True)
+    
     # ===== /debug logs group commands =====
     
     @logs_group.command(name="level", description="Set global log level")
@@ -2032,10 +2132,10 @@ class AdminPanel(commands.Cog):
             logger.error(f"Error in photo_debt_user_autocomplete: {e}")
             return []
     
-    @app_commands.command(name="clearphotodebt", description="Admin: Clear a user's photo debt")
-    @is_admin_check()
+    @debt_group.command(name="clear", description="Clear a user's photo debt")
     @app_commands.describe(user="Select user with photo debt")
     @app_commands.autocomplete(user=photo_debt_user_autocomplete)
+    @is_admin_check()
     async def clear_photo_debt(self, interaction: discord.Interaction, user: str):
         """Clear all photo debts for a user"""
         with get_db_session() as session:
@@ -2068,7 +2168,7 @@ class AdminPanel(commands.Cog):
             )
             logger.info(f"Admin {interaction.user.name} cleared {len(debts)} photo debts for {user}")
     
-    @app_commands.command(name="photoaudit", description="Admin: View all outstanding photo debts")
+    @debt_group.command(name="audit", description="View all outstanding photo debts")
     @is_admin_check()
     async def photo_audit(self, interaction: discord.Interaction):
         """View all outstanding photo debts"""
@@ -2113,19 +2213,17 @@ class AdminPanel(commands.Cog):
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
     
-    @app_commands.command(name="photodebts", description="Admin: View photo debts for a specific tool")
-    @is_admin_check()
+    @debt_group.command(name="list", description="View photo debts for a specific tool")
     @app_commands.describe(tool="Tool name (leave empty for current channel)")
+    @is_admin_check()
     async def photo_debts_for_tool(self, interaction: discord.Interaction, tool: str = None):
         """View photo debts for a specific tool"""
         # Get tool name
         if tool:
             tool_name = tool
         else:
-            try:
-                tool_name = get_tool_from_channel_or_error(interaction.channel)
-            except InvalidToolChannelError as e:
-                await interaction.response.send_message(e.user_message, ephemeral=True)
+            tool_name = await validate_tool_channel(interaction)
+            if tool_name is None:
                 return
         
         with get_db_session() as session:

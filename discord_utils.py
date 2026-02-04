@@ -3,13 +3,209 @@ Discord-specific utility functions.
 """
 import discord
 from discord import Interaction, app_commands
-from typing import Optional, List
+from typing import Optional, List, Union
+from dataclasses import dataclass
+from functools import wraps
 import logging
 
 from exceptions import InvalidToolChannelError
 from config import get_config
 
 logger = logging.getLogger(__name__)
+
+
+# ========== DM Sending Utilities ==========
+
+@dataclass
+class DMResult:
+    """Result of attempting to send a DM"""
+    success: bool
+    error_type: Optional[str] = None  # 'forbidden', 'not_found', 'error'
+    error_message: Optional[str] = None
+
+
+async def send_dm(
+    bot: discord.Client,
+    user_id: Union[str, int],
+    content: Optional[str] = None,
+    embed: Optional[discord.Embed] = None,
+    *,
+    log_context: Optional[str] = None
+) -> DMResult:
+    """
+    Send a DM to a user with comprehensive error handling.
+    
+    Args:
+        bot: Discord bot/client instance
+        user_id: User ID to send DM to (string or int)
+        content: Text content to send (optional if embed provided)
+        embed: Embed to send (optional if content provided)
+        log_context: Optional context for logging (e.g., "reservation reminder for laser-cutter")
+    
+    Returns:
+        DMResult with success status and error info if failed
+    
+    Example:
+        result = await send_dm(bot, user_id, embed=my_embed, log_context="expiration warning")
+        if not result.success:
+            if result.error_type == 'forbidden':
+                # User has DMs disabled
+                ...
+    """
+    context = log_context or "message"
+    
+    try:
+        user = await bot.fetch_user(int(user_id))
+        
+        if content and embed:
+            await user.send(content=content, embed=embed)
+        elif embed:
+            await user.send(embed=embed)
+        elif content:
+            await user.send(content)
+        else:
+            logger.warning(f"send_dm called with no content or embed for user {user_id}")
+            return DMResult(success=False, error_type='error', error_message="No content provided")
+        
+        logger.debug(f"Sent DM to {user_id}: {context}")
+        return DMResult(success=True)
+        
+    except discord.NotFound:
+        logger.warning(f"Cannot DM user {user_id} - user not found ({context})")
+        return DMResult(success=False, error_type='not_found', error_message="User not found")
+        
+    except discord.Forbidden:
+        logger.warning(f"Cannot DM user {user_id} - DMs disabled ({context})")
+        return DMResult(success=False, error_type='forbidden', error_message="User has DMs disabled")
+        
+    except Exception as e:
+        logger.error(f"Failed to send DM to {user_id} ({context}): {e}", exc_info=True)
+        return DMResult(success=False, error_type='error', error_message=str(e))
+
+
+async def send_admin_channel_message(
+    bot: discord.Client,
+    content: Optional[str] = None,
+    embed: Optional[discord.Embed] = None
+) -> bool:
+    """
+    Send a message to the admin channel.
+    
+    Args:
+        bot: Discord bot/client instance
+        content: Text content (optional)
+        embed: Embed to send (optional)
+    
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    try:
+        config = get_config()
+        if not config.admin_channel_id:
+            logger.debug("No admin channel configured")
+            return False
+        
+        channel = bot.get_channel(int(config.admin_channel_id))
+        if not channel:
+            logger.warning(f"Admin channel {config.admin_channel_id} not found")
+            return False
+        
+        if content and embed:
+            await channel.send(content=content, embed=embed)
+        elif embed:
+            await channel.send(embed=embed)
+        elif content:
+            await channel.send(content)
+        else:
+            return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to send admin channel message: {e}", exc_info=True)
+        return False
+
+
+# ========== Channel Validation Decorator ==========
+
+def requires_tool_channel(func):
+    """
+    Decorator that validates the interaction is in a signout-[tool] channel.
+    
+    Injects `tool_name` as a keyword argument to the decorated function.
+    The decorated function must accept `tool_name` as a parameter.
+    
+    Usage:
+        @bot.tree.command(name="mycommand")
+        @requires_tool_channel
+        async def my_command(interaction: discord.Interaction, tool_name: str):
+            # tool_name is automatically extracted and validated
+            ...
+    """
+    @wraps(func)
+    async def wrapper(interaction_or_self, *args, **kwargs):
+        # Handle both standalone commands and cog methods
+        if isinstance(interaction_or_self, discord.Interaction):
+            interaction = interaction_or_self
+            is_cog = False
+        else:
+            # It's a cog method, first positional arg is interaction
+            is_cog = True
+            self_ref = interaction_or_self
+            if args:
+                interaction = args[0]
+                args = args[1:]
+            else:
+                raise ValueError("No interaction found in decorated function")
+        
+        try:
+            tool_name = get_tool_from_channel_or_error(interaction.channel)
+        except InvalidToolChannelError as e:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+            return
+        
+        # Inject tool_name
+        kwargs['tool_name'] = tool_name
+        
+        if is_cog:
+            return await func(self_ref, interaction, *args, **kwargs)
+        else:
+            return await func(interaction, *args, **kwargs)
+    
+    return wrapper
+
+
+async def validate_tool_channel(interaction: discord.Interaction, *, deferred: bool = False) -> Optional[str]:
+    """
+    Validate that the interaction is in a signout channel and return the tool name.
+    
+    Args:
+        interaction: Discord interaction
+        deferred: If True, uses followup.send instead of response.send_message for errors
+    
+    Returns:
+        Tool name if valid, None if invalid (error message already sent)
+    
+    Usage:
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
+            return
+        # Continue with tool_name...
+        
+        # For deferred interactions:
+        await interaction.response.defer()
+        tool_name = await validate_tool_channel(interaction, deferred=True)
+        if tool_name is None:
+            return
+    """
+    try:
+        return get_tool_from_channel_or_error(interaction.channel)
+    except InvalidToolChannelError as e:
+        if deferred:
+            await interaction.followup.send(e.user_message, ephemeral=True)
+        else:
+            await interaction.response.send_message(e.user_message, ephemeral=True)
+        return None
 
 
 def extract_tool_from_channel(channel) -> Optional[str]:
@@ -71,11 +267,22 @@ def user_is_admin(user) -> bool:
     Check if user has admin permissions.
     
     Args:
-        user: Discord user/member object
+        user: Discord user/member object (should be a Member for full checks)
     
     Returns:
-        True if user has an admin role, False otherwise
+        True if user is server owner, has Discord admin permission, or has an admin role
     """
+    # Check if user is a Member (has guild context)
+    if hasattr(user, 'guild') and user.guild:
+        # Check if server owner
+        if user.guild.owner_id == user.id:
+            return True
+        
+        # Check if has Discord administrator permission
+        if hasattr(user, 'guild_permissions') and user.guild_permissions.administrator:
+            return True
+    
+    # Check for configured admin roles
     config = get_config()
     return any(role.name in config.admin_roles for role in getattr(user, "roles", []))
 
