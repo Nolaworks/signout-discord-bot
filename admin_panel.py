@@ -2066,6 +2066,147 @@ class AdminPanel(commands.Cog):
         
         await interaction.followup.send(summary_text, ephemeral=True)
     
+    @admin_group.command(name="help", description="Admin command reference")
+    @is_admin_check()
+    async def admin_help(self, interaction: discord.Interaction):
+        """Display help information for admin commands"""
+        embed = discord.Embed(
+            title="Admin Commands Reference",
+            description="Complete list of administrator commands\n\n**All commands organized under `/admin` and `/debug`**",
+            color=discord.Color.gold()
+        )
+        
+        # Tool Management
+        embed.add_field(
+            name="Tool Management (`/admin tool`)",
+            value=(
+                "`/admin tool add name:<tool> [max_hours] [role_required]` - Add a new tool\n"
+                "`/admin tool remove name:<tool>` - Remove a tool\n"
+                "`/admin tool maxtime hours:<int>` - Set max hours for current tool"
+            ),
+            inline=False
+        )
+        
+        # Reservation Management
+        embed.add_field(
+            name="Reservation Management (`/admin reservation`)",
+            value=(
+                "`/admin reservation clear` - Clear all for current tool\n"
+                "`/admin reservation forcereturn` - Force return current\n"
+                "`/admin reservation adjust` - Edit another user's reservation\n"
+                "`/admin signout user:<name> tool:<name> time:<range>` - Create reservation for user"
+            ),
+            inline=False
+        )
+        
+        # Admin Blocks
+        embed.add_field(
+            name="Admin Blocks (`/admin block`)",
+            value=(
+                "`/admin block add tool:<select> time:<range> [force]` - Block tool(s)\n"
+                "  • Select `[All Tools]` to block everything\n"
+                "  • Use `force:true` to override existing reservations\n"
+                "`/admin block remove block:<select>` - Remove a block\n"
+                "`/admin block list` - Show all active blocks"
+            ),
+            inline=False
+        )
+        
+        # Consecutive Signout Limits
+        embed.add_field(
+            name="Re-Signout Limits (`/admin limit`)",
+            value=(
+                "`/admin limit set max:<int> cooldown:<hours>` - Set limits\n"
+                "`/admin limit view` - View all configured limits\n"
+                "`/admin limit check` - See who's in cooldown\n"
+                "`/admin limit clear user:<name>` - Reset cooldown"
+            ),
+            inline=False
+        )
+        
+        # Exemptions
+        embed.add_field(
+            name="Exemptions (`/admin exempt`)",
+            value=(
+                "`/admin exempt add user:<name>` - Exempt from limits\n"
+                "`/admin exempt remove user:<name>` - Remove exemption\n"
+                "`/admin exempt list` - View all exemptions"
+            ),
+            inline=False
+        )
+        
+        # Role Management
+        embed.add_field(
+            name="Role Management (`/admin role`)",
+            value=(
+                "`/admin role toggle` - Enable/disable role requirement\n"
+                "`/admin role assign user:<name>` - Give tool access\n"
+                "`/admin role revoke user:<name>` - Remove tool access\n"
+                "`/admin role sync` - Sync all tool roles"
+            ),
+            inline=False
+        )
+        
+        # Photo Debt Management
+        embed.add_field(
+            name="Photo Debt Management (`/admin debt`)",
+            value=(
+                "`/admin debt clear user:<name>` - Clear user's photo debts\n"
+                "`/admin debt audit` - View all outstanding photo debts\n"
+                "`/admin debt list [tool]` - View debts for specific tool"
+            ),
+            inline=False
+        )
+        
+        # Photo Review
+        embed.add_field(
+            name="Photo Review (`/admin photo`)",
+            value=(
+                "`/admin photo pending [limit]` - View photos awaiting review\n"
+                "`/admin photo approve reservation_id:<id>` - Approve photos for a reservation"
+            ),
+            inline=False
+        )
+        
+        # Notifications
+        embed.add_field(
+            name="Notifications",
+            value=(
+                "`/admin summary` - Send daily summary to all admins\n"
+                "`/testnotify` - Test notification system (dev)"
+            ),
+            inline=False
+        )
+        
+        # Logging & Debugging
+        embed.add_field(
+            name="Logging & Debug (`/debug logs`)",
+            value=(
+                "`/debug logs level level:<DEBUG|INFO|WARNING|ERROR>` - Set log level\n"
+                "`/debug logs tail [lines]` - View recent log entries\n"
+                "`/debug logs watch enable:<true|false>` - Stream logs to channel"
+            ),
+            inline=False
+        )
+        
+        # Tips
+        embed.add_field(
+            name="Admin Tips",
+            value=(
+                "• Type `/admin` to see all admin command groups\n"
+                "• **Tool Room channels** enforce photo requirements automatically\n"
+                "• **Role requirements** enabled by default for new tools\n"
+                "• **Re-signout limits** prevent monopolizing tools\n"
+                "• Admins bypass role checks and limit restrictions\n"
+                "• All admin actions are logged for auditing"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="All admin commands require Administrator permission or admin role")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
     # ===== /debug logs group commands =====
     
     @logs_group.command(name="level", description="Set global log level")
