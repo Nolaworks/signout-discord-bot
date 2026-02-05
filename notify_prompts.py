@@ -140,6 +140,22 @@ class ReturnPhotoRequestPrompts:
         )
 
 
+class ReturnToolPhotoRequestPrompts:
+    """Prompts for requesting return photo when user manually returns tool"""
+    
+    TITLE = "Return Photo Required"
+    FOOTER = "Simply attach the photo in this DM conversation"
+    
+    @staticmethod
+    def description(tool_name: str, reservation: str) -> str:
+        return (
+            f"**Return photo required for {tool_name}**\n\n"
+            f"Please send a photo of the tool via DM to complete your return.\n"
+            f"You have **30 minutes** to submit the photo, or you will be blocked from Tool Room signouts.\n\n"
+            f"Reservation: `{reservation}`"
+        )
+
+
 # ========== Photo DM Responses ==========
 
 class PhotoDebtResponsePrompts:

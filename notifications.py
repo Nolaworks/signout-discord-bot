@@ -18,8 +18,8 @@ from discord_utils import send_dm, send_admin_channel_message
 from notify_prompts import (
     Colors, ReminderPrompts, ExpirationPrompts, WaitlistPrompts,
     PhotoWarningPrompts, PhotoCancellationPrompts, PhotoDebtEnforcementPrompts,
-    ReturnPhotoRequestPrompts, PhotoDebtResponsePrompts, StartPhotoReceivedPrompts,
-    ReturnPhotoReceivedPrompts, NoPhotoRequirementsPrompts,
+    ReturnPhotoRequestPrompts, ReturnToolPhotoRequestPrompts, PhotoDebtResponsePrompts, 
+    StartPhotoReceivedPrompts, ReturnPhotoReceivedPrompts, NoPhotoRequirementsPrompts,
     AdminPhotoCancellationPrompts, AdminPhotoDebtEnforcedPrompts, DailySummaryPrompts
 )
 
@@ -715,6 +715,18 @@ class NotificationManager:
             description=NoPhotoRequirementsPrompts.DESCRIPTION,
             color=Colors.INFO
         )
+        return embed
+    
+    def build_return_tool_photo_request_embed(self, tool_name: str, reservation: str) -> discord.Embed:
+        """Build embed for return photo request when user uses /returntool"""
+        embed = discord.Embed(
+            title=ReturnToolPhotoRequestPrompts.TITLE,
+            description=ReturnToolPhotoRequestPrompts.description(tool_name, reservation),
+            color=Colors.WARNING
+        )
+        embed.add_field(name="Tool", value=tool_name, inline=True)
+        embed.add_field(name="Reservation", value=f"`{reservation}`", inline=False)
+        embed.set_footer(text=ReturnToolPhotoRequestPrompts.FOOTER)
         return embed
     
     # ========== Utility Methods ==========

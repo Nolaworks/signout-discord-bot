@@ -109,19 +109,19 @@ async def clean_expired_signouts():
                 session.commit()
             
             # Step 2: Archive and delete all non-ACTIVE reservations
-            # BUT: Keep EXPIRED reservations that have outstanding return photo debts
+            # BUT: Keep EXPIRED or RETURNED reservations that have outstanding return photo debts
             non_active = res_repo.get_non_active_reservations()
             if non_active:
                 archived_count = 0
                 for reservation in non_active:
-                    # Check if this is an EXPIRED reservation with outstanding return photo debt
-                    if reservation.status == ReservationStatusEnum.EXPIRED:
+                    # Check if this is an EXPIRED or RETURNED reservation with outstanding return photo debt
+                    if reservation.status in [ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED]:
                         # Check for active return photo debts for this reservation
                         active_return_debts = photo_debt_repo.get_active_debts_for_reservation(reservation.id, PhotoDebtTypeEnum.RETURN)
                         
                         if active_return_debts:
                             # Don't archive yet - user needs to upload return photo
-                            logger.info(f"Keeping EXPIRED reservation {reservation.username} - {reservation.tool_name} (has active return photo debt)")
+                            logger.info(f"Keeping {reservation.status.value} reservation {reservation.username} - {reservation.tool_name} (has active return photo debt)")
                             continue
                     
                     # Archive to history (with current status: EXPIRED, CANCELLED, RETURNED)
@@ -251,9 +251,9 @@ async def handle_dm_photo_upload(message: discord.Message):
     if not message.attachments:
         return
     
-    # Get the first image attachment
-    photo = next((att for att in message.attachments if att.content_type and att.content_type.startswith('image/')), None)
-    if not photo:
+    # Get all image attachments
+    photos = [att for att in message.attachments if att.content_type and att.content_type.startswith('image/')]
+    if not photos:
         await message.channel.send("Please send an image file (PNG, JPG, etc.)")
         return
     
@@ -298,73 +298,52 @@ async def handle_dm_photo_upload(message: discord.Message):
             logger.info(f"User {username} attempted to clear {debt.debt_type.value} photo debt via DM - requires admin (grace expired: {grace_expired})")
             return
         
-        # Check for active reservations needing photos (photo_required=True, no start photos)
+        # PRIORITY 1: Check for EXPIRED or RETURNED reservations needing return photos (Tool Room only)
+        # These have a 30-minute grace period deadline, so they take priority
         from database import ReservationPhotoModel, PhotoTypeEnum, ReservationModel
         from repositories import ReservationPhotoRepository
         from sqlalchemy import and_
         
-        active_reservations = res_repo.get_active_for_user(user_id)
         photo_repo = ReservationPhotoRepository(session)
         
-        # Check for start photos needed
-        reservations_needing_start_photo = []
-        for r in active_reservations:
-            if r.photo_required:
-                # Check if has start photos
-                start_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.START)
-                if not start_photos:
-                    reservations_needing_start_photo.append(r)
-        
-        if reservations_needing_start_photo:
-            # Prioritize reservation starting soonest
-            reservations_needing_start_photo.sort(key=lambda r: r.start_time)
-            reservation = reservations_needing_start_photo[0]
-            
-            # Add start photo
-            photo_repo.add_photo(
-                reservation_id=reservation.id,
-                photo_type=PhotoTypeEnum.START,
-                photo_url=photo.url,
-                user_id=user_id,
-                username=username,
-                tool_name=reservation.tool_name
-            )
-            session.commit()
-            
-            embed = notification_manager.build_start_photo_received_embed(reservation, photo.url)
-            await message.channel.send(embed=embed)
-            logger.info(f"Attached start photo via DM for {username} - {reservation.tool_name}")
-            return
-        
-        # Check for EXPIRED reservations needing return photos (Tool Room only)
-        expired_reservations = session.query(ReservationModel).filter(
+        expired_or_returned_reservations = session.query(ReservationModel).filter(
             and_(
                 ReservationModel.user_id == user_id,
-                ReservationModel.status == ReservationStatusEnum.EXPIRED
+                ReservationModel.status.in_([ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED])
             )
         ).all()
         
-        reservations_needing_return_photo = []
-        for r in expired_reservations:
-            # Check if has return photos
-            return_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.RETURN)
-            if not return_photos:
-                reservations_needing_return_photo.append(r)
+        # Filter to only Tool Room tools that don't have return photos yet
+        from repositories import ToolRepository
+        tool_repo = ToolRepository(session)
         
-        if reservations_needing_return_photo:
-            # Use the most recent expired reservation
-            reservations_needing_return_photo.sort(key=lambda r: r.end_time, reverse=True)
-            reservation = reservations_needing_return_photo[0]
+        tool_room_reservations = []
+        for r in expired_or_returned_reservations:
+            tool = tool_repo.get_by_name(r.tool_name)
+            if tool and tool.is_tool_room:
+                # Check if this reservation already has return photos
+                existing_return_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.RETURN)
+                if not existing_return_photos:
+                    # Only add if no return photos exist yet
+                    tool_room_reservations.append(r)
+        
+        if tool_room_reservations:
+            # Use the most recent expired/returned reservation
+            tool_room_reservations.sort(key=lambda r: r.end_time, reverse=True)
+            reservation = tool_room_reservations[0]
             
-            # Add return photo
-            photo_repo.add_photo(
-                reservation_id=reservation.id,
-                photo_type=PhotoTypeEnum.RETURN,
-                photo_url=photo.url,
-                user_id=user_id,
-                username=username,
-                tool_name=reservation.tool_name
-            )
+            # Add all return photos from this message
+            photos_added = 0
+            for photo in photos:
+                photo_repo.add_photo(
+                    reservation_id=reservation.id,
+                    photo_type=PhotoTypeEnum.RETURN,
+                    photo_url=photo.url,
+                    user_id=user_id,
+                    username=username,
+                    tool_name=reservation.tool_name
+                )
+                photos_added += 1
             
             # Clear any return photo debts for this reservation (only if within grace period)
             if return_debts_in_grace:
@@ -375,10 +354,67 @@ async def handle_dm_photo_upload(message: discord.Message):
             
             session.commit()
             
-            embed = notification_manager.build_return_photo_received_embed(reservation, photo.url)
+            # Use first photo for thumbnail
+            embed = notification_manager.build_return_photo_received_embed(reservation, photos[0].url)
+            if photos_added > 1:
+                embed.add_field(name="Photos Uploaded", value=f"{photos_added} photos", inline=True)
             await message.channel.send(embed=embed)
-            logger.info(f"Attached return photo via DM for {username} - {reservation.tool_name}")
+            logger.info(f"Attached {photos_added} return photo(s) via DM for {username} - {reservation.tool_name}")
             return
+        
+        # PRIORITY 2: Check for active reservations needing start photos (photo_required=True)
+        # These are checked after return photos since they have more flexible timing
+        active_reservations = res_repo.get_active_for_user(user_id)
+        
+        # Check for reservations with photo requirements
+        photo_required_reservations = [r for r in active_reservations if r.photo_required]
+        
+        if photo_required_reservations:
+            # First, prioritize reservations that have NO start photos yet (urgent)
+            reservations_without_photos = []
+            reservations_with_photos = []
+            
+            for r in photo_required_reservations:
+                existing_photos = photo_repo.get_photos_by_type(r.id, PhotoTypeEnum.START)
+                if not existing_photos:
+                    reservations_without_photos.append(r)
+                else:
+                    reservations_with_photos.append(r)
+            
+            # Pick reservation: prioritize those without photos, then by start time
+            if reservations_without_photos:
+                # Sort by start time, pick the one that started earliest (most urgent)
+                reservations_without_photos.sort(key=lambda r: r.start_time)
+                reservation = reservations_without_photos[0]
+            elif reservations_with_photos:
+                # All have photos, allow adding more to the earliest one
+                reservations_with_photos.sort(key=lambda r: r.start_time)
+                reservation = reservations_with_photos[0]
+            else:
+                reservation = None
+            
+            if reservation:
+                # Add all start photos from this message
+                photos_added = 0
+                for photo in photos:
+                    photo_repo.add_photo(
+                        reservation_id=reservation.id,
+                        photo_type=PhotoTypeEnum.START,
+                        photo_url=photo.url,
+                        user_id=user_id,
+                        username=username,
+                        tool_name=reservation.tool_name
+                    )
+                    photos_added += 1
+                session.commit()
+                
+                # Use first photo for thumbnail
+                embed = notification_manager.build_start_photo_received_embed(reservation, photos[0].url)
+                if photos_added > 1:
+                    embed.add_field(name="Photos Uploaded", value=f"{photos_added} photos", inline=True)
+                await message.channel.send(embed=embed)
+                logger.info(f"Attached {photos_added} start photo(s) via DM for {username} - {reservation.tool_name}")
+                return
         
         # No reservations found needing photos
         embed = notification_manager.build_no_photo_requirements_embed()
@@ -1204,15 +1240,10 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
                 f"{display_name} returned **{tool_name}** — `{reservation}`"
             )
             
-            # Send DM with photo request
+            # Send DM with photo request using embed
             try:
-                await interaction.user.send(
-                    f"**Return photo required for {tool_name}**\n\n"
-                    f"Please send a photo of the tool via DM to complete your return.\n"
-                    f"You have **30 minutes** to submit the photo, or you will be blocked from Tool Room signouts.\n\n"
-                    f"Reservation: `{reservation}`\n\n"
-                    f"*Simply attach the photo in this DM conversation.*"
-                )
+                embed = notification_manager.build_return_tool_photo_request_embed(tool_name, reservation)
+                await interaction.user.send(embed=embed)
                 logger.info(f"Sent return photo request DM: {interaction.user.name} - {tool_name}")
             except Exception as e:
                 logger.error(f"Failed to send return photo DM to {interaction.user.name}: {e}")
