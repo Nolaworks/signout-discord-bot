@@ -134,7 +134,7 @@ class ReturnPhotoRequestPrompts:
     def description(tool_name: str) -> str:
         return (
             f"Your **{tool_name}** reservation has ended.\n\n"
-            f"Please send a photo of the tool via DM to complete your return.\n"
+            f"Please send a photo(s) of the tool via DM to complete your return.\n"
             f"You have **30 minutes** to submit the return photo, or you will be blocked from Tool Room signouts.\n\n"
             f"*Simply attach the photo in this DM conversation.*"
         )
