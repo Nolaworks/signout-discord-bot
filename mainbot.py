@@ -99,20 +99,10 @@ async def clean_expired_signouts():
                             )
                             
                             # Send DM requesting return photo
-                            result = await send_dm(
-                                bot,
-                                reservation.user_id,
-                                content=(
-                                    f"**Your {reservation.tool_name} reservation has ended.**\n\n"
-                                    f"Please send a photo of the tool via DM to complete your return.\n"
-                                    f"You have **30 minutes** to submit the return photo, or you will be blocked from Tool Room signouts.\n\n"
-                                    f"Reservation: `{reservation.formatted_time}`\n\n"
-                                    f"*Simply attach the photo in this DM conversation.*"
-                                ),
-                                log_context=f"return photo request for {reservation.tool_name}"
-                            )
-                            if result.success:
-                                logger.info(f"Sent return photo request DM: {reservation.username} - {reservation.tool_name}")
+                            if notification_manager:
+                                success = await notification_manager.send_return_photo_request(reservation)
+                                if success:
+                                    logger.info(f"Sent return photo request DM: {reservation.username} - {reservation.tool_name}")
                     
                     reservation.status = ReservationStatusEnum.EXPIRED
                     logger.info(f"Marked as expired: {reservation.username} - {reservation.tool_name} (was {old_status.value})")
@@ -301,20 +291,11 @@ async def handle_dm_photo_upload(message: discord.Message):
         # Block if user has START photo debts OR expired return debts (both require admin)
         if start_debts or return_debts_expired:
             debt = start_debts[0] if start_debts else return_debts_expired[0]
+            grace_expired = debt.debt_type == PhotoDebtTypeEnum.RETURN
             
-            if debt.debt_type == PhotoDebtTypeEnum.RETURN:
-                grace_msg = "The 30-minute grace period has expired.\n\n"
-            else:
-                grace_msg = ""
-            
-            await message.channel.send(
-                f"You have an outstanding photo debt for **{debt.tool_name}** "
-                f"({debt.debt_type.value} photo not provided).\n\n"
-                f"{grace_msg}"
-                f"Photo debts must be cleared by an administrator. Please contact an admin "
-                f"and show them this photo to resolve the debt."
-            )
-            logger.info(f"User {username} attempted to clear {debt.debt_type.value} photo debt via DM - requires admin (grace expired: {debt.debt_type == PhotoDebtTypeEnum.RETURN})")
+            embed = notification_manager.build_photo_debt_response_embed(debt, grace_expired)
+            await message.channel.send(embed=embed)
+            logger.info(f"User {username} attempted to clear {debt.debt_type.value} photo debt via DM - requires admin (grace expired: {grace_expired})")
             return
         
         # Check for active reservations needing photos (photo_required=True, no start photos)
@@ -350,10 +331,8 @@ async def handle_dm_photo_upload(message: discord.Message):
             )
             session.commit()
             
-            await message.channel.send(
-                f"✓ **Start photo** attached to your **{reservation.tool_name}** reservation "
-                f"({reservation.formatted_time}). Thank you!"
-            )
+            embed = notification_manager.build_start_photo_received_embed(reservation, photo.url)
+            await message.channel.send(embed=embed)
             logger.info(f"Attached start photo via DM for {username} - {reservation.tool_name}")
             return
         
@@ -396,19 +375,14 @@ async def handle_dm_photo_upload(message: discord.Message):
             
             session.commit()
             
-            await message.channel.send(
-                f"✓ **Return photo** attached to your **{reservation.tool_name}** reservation "
-                f"({reservation.formatted_time}). Thank you!\n\n"
-                f"Your photo debt has been cleared."
-            )
+            embed = notification_manager.build_return_photo_received_embed(reservation, photo.url)
+            await message.channel.send(embed=embed)
             logger.info(f"Attached return photo via DM for {username} - {reservation.tool_name}")
             return
         
         # No reservations found needing photos
-        await message.channel.send(
-            "No active reservations or photo requirements found. "
-            "If you need to attach a photo to a specific reservation, please contact an admin."
-        )
+        embed = notification_manager.build_no_photo_requirements_embed()
+        await message.channel.send(embed=embed)
 
 
 # ========== Notification and Waitlist Commands ==========

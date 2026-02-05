@@ -15,6 +15,13 @@ from database import (
 )
 from time_utils import get_now, get_now_naive, to_naive, to_aware, CENTRAL_TZ
 from discord_utils import send_dm, send_admin_channel_message
+from notify_prompts import (
+    Colors, ReminderPrompts, ExpirationPrompts, WaitlistPrompts,
+    PhotoWarningPrompts, PhotoCancellationPrompts, PhotoDebtEnforcementPrompts,
+    ReturnPhotoRequestPrompts, PhotoDebtResponsePrompts, StartPhotoReceivedPrompts,
+    ReturnPhotoReceivedPrompts, NoPhotoRequirementsPrompts,
+    AdminPhotoCancellationPrompts, AdminPhotoDebtEnforcedPrompts, DailySummaryPrompts
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,19 +109,14 @@ class NotificationManager:
         photo_warning = ""
         start_photos = [p for p in reservation.photos if p.photo_type.value == 'start']
         if reservation.photo_required and not start_photos:
-            photo_warning = (
-                "\n\n**IMPORTANT: Photo Required**\n"
-                "This Tool Room reservation requires a photo. You must send a photo of the tool "
-                "to this bot via DM before your reservation starts, or it will be cancelled.\n\n"
-                "Reply to this message with a photo of the tool within the next 25 minutes."
-            )
+            photo_warning = ReminderPrompts.PHOTO_WARNING
             # Mark that photo reminder was sent
             reservation.photo_reminder_sent_at = datetime.utcnow()
         
         embed = discord.Embed(
-            title="Reservation Reminder",
-            description=f"Your reservation for **{reservation.tool_name}** starts in **{minutes} minutes**!{photo_warning}",
-            color=discord.Color.orange() if photo_warning else discord.Color.blue()
+            title=ReminderPrompts.TITLE,
+            description=ReminderPrompts.description(reservation.tool_name, minutes, photo_warning),
+            color=Colors.WARNING if photo_warning else Colors.INFO
         )
         embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
         embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
@@ -123,7 +125,7 @@ class NotificationManager:
         if start_photos:
             embed.set_thumbnail(url=start_photos[0].photo_url)
         
-        embed.set_footer(text="Use /returntool when you're done | /notifyprefs to adjust settings")
+        embed.set_footer(text=ReminderPrompts.FOOTER)
         
         result = await send_dm(
             self.bot, reservation.user_id, embed=embed,
@@ -203,15 +205,15 @@ class NotificationManager:
         minutes = int(time_until.total_seconds() / 60)
         
         embed = discord.Embed(
-            title="Reservation Expiring Soon",
-            description=f"Your reservation for **{reservation.tool_name}** expires in **{minutes} minutes**!",
-            color=discord.Color.orange()
+            title=ExpirationPrompts.TITLE,
+            description=ExpirationPrompts.description(reservation.tool_name, minutes),
+            color=Colors.WARNING
         )
         embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
         embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
         embed.add_field(
             name="Action Required",
-            value="Return the tool or use /adjusttime to extend if no conflicts exist.",
+            value=ExpirationPrompts.ACTION_REQUIRED,
             inline=False
         )
         
@@ -219,7 +221,7 @@ class NotificationManager:
         if reservation.photos:
             embed.set_thumbnail(url=reservation.photos[0].photo_url)
         
-        embed.set_footer(text="Use /returntool to return early | /adjusttime to extend")
+        embed.set_footer(text=ExpirationPrompts.FOOTER)
         
         result = await send_dm(
             self.bot, reservation.user_id, embed=embed,
@@ -330,16 +332,16 @@ class NotificationManager:
             return
         
         embed = discord.Embed(
-            title="Tool Available!",
-            description=f"**{waitlist_entry.tool_name}** is now available!",
-            color=discord.Color.green()
+            title=WaitlistPrompts.TITLE,
+            description=WaitlistPrompts.description(waitlist_entry.tool_name),
+            color=Colors.SUCCESS
         )
         embed.add_field(
             name="Reserve Now",
-            value=f"Go to the #signout-{waitlist_entry.tool_name} channel and use /signout",
+            value=WaitlistPrompts.reserve_now(waitlist_entry.tool_name),
             inline=False
         )
-        embed.set_footer(text="First come, first served!")
+        embed.set_footer(text=WaitlistPrompts.FOOTER)
         
         result = await send_dm(
             self.bot, waitlist_entry.user_id, embed=embed,
@@ -403,9 +405,9 @@ class NotificationManager:
         
         # Build embed once (same for all admins)
         embed = discord.Embed(
-            title="Daily Tool Usage Summary",
-            description=f"Statistics for {yesterday.strftime('%B %d, %Y')}",
-            color=discord.Color.purple()
+            title=DailySummaryPrompts.TITLE,
+            description=DailySummaryPrompts.description(yesterday.strftime('%B %d, %Y')),
+            color=Colors.ADMIN
         )
         embed.add_field(name="New Reservations (24h)", value=str(total_reservations), inline=True)
         embed.add_field(name="Currently Active", value=str(active_reservations), inline=True)
@@ -416,7 +418,7 @@ class NotificationManager:
                                    for i, tool in enumerate(popular_tools)])
             embed.add_field(name="Most Popular Tools", value=tools_list, inline=False)
         
-        embed.set_footer(text="Generated daily at 9:00 AM")
+        embed.set_footer(text=DailySummaryPrompts.FOOTER)
         
         # Send to each admin
         for admin_id in admin_user_ids:
@@ -499,19 +501,13 @@ class NotificationManager:
     async def _send_photo_warning(self, session: Session, reservation: ReservationModel):
         """Send warning that reservation will be cancelled without photo"""
         embed = discord.Embed(
-            title="Photo Required - Reservation at Risk",
-            description=(
-                f"Your reservation for **{reservation.tool_name}** has started, "
-                f"but you haven't provided the required photo yet.\n\n"
-                f"**You have 10 minutes to send a photo to this bot via DM, "
-                f"or your reservation will be cancelled**\n\n"
-                f"Simply reply to this message with a photo of the tool."
-            ),
-            color=discord.Color.red()
+            title=PhotoWarningPrompts.TITLE,
+            description=PhotoWarningPrompts.description(reservation.tool_name),
+            color=Colors.ERROR
         )
         embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
         embed.add_field(name="Time", value=reservation.formatted_time, inline=False)
-        embed.set_footer(text="Photo must show the tool/workspace")
+        embed.set_footer(text=PhotoWarningPrompts.FOOTER)
         
         result = await send_dm(
             self.bot, reservation.user_id, embed=embed,
@@ -557,19 +553,12 @@ class NotificationManager:
             
             # Notify user
             embed = discord.Embed(
-                title="Reservation Cancelled - Photo Not Provided",
-                description=(
-                    f"**Photo or it didn't happen!**\n\n"
-                    f"Your **{reservation.tool_name}** reservation has been cacelled "
-                    f"due to no start photo provided.\n\n"
-                    f"**Your tool privileges have been "
-                    f"temporarily disabled so you won't be able to make new reservations until your photo debt is cleared.**\n\n"
-                    f"Please speak to a shop leader asap."
-                ),
-                color=discord.Color.dark_red()
+                title=PhotoCancellationPrompts.TITLE,
+                description=PhotoCancellationPrompts.description(reservation.tool_name),
+                color=Colors.CRITICAL
             )
             embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-            embed.set_footer(text="Shop leaders can clear photo debts with /clearphotodebt")
+            embed.set_footer(text=PhotoCancellationPrompts.FOOTER)
             
             await send_dm(
                 self.bot, reservation.user_id, embed=embed,
@@ -591,12 +580,10 @@ class NotificationManager:
         """Notify admin channel about photo cancellation"""
         await send_admin_channel_message(
             self.bot,
-            content=(
-                f"**Reservation Auto-Cancelled - Missing Photo**\n"
-                f"User: {reservation.username}\n"
-                f"Tool: {reservation.tool_name}\n"
-                f"Time: {reservation.formatted_time}\n"
-                f"Reason: No start photo provided within grace period"
+            content=AdminPhotoCancellationPrompts.content(
+                reservation.username,
+                reservation.tool_name,
+                reservation.formatted_time
             )
         )
     
@@ -624,18 +611,12 @@ class NotificationManager:
         
         for debt in overdue_debts:
             embed = discord.Embed(
-                title="Blocked from Tool Room - Missing Photo",
-                description=(
-                    f"**Photo or it didn't happen!**\n\n"
-                    f"You have an outstanding photo debt for **{debt.tool_name}**.\n\n"
-                    f"**The Tool Room now considers you a flight risk.** Your tool privileges have been "
-                    f"temporarily relocated to the Shadow Realm.\n\n"
-                    f"Summon a shop leader to discuss your path to redemption."
-                ),
-                color=discord.Color.dark_red()
+                title=PhotoDebtEnforcementPrompts.TITLE,
+                description=PhotoDebtEnforcementPrompts.description(debt.tool_name),
+                color=Colors.CRITICAL
             )
             embed.add_field(name="Tool", value=debt.tool_name, inline=True)
-            embed.set_footer(text="This restriction will remain until an admin clears the debt")
+            embed.set_footer(text=PhotoDebtEnforcementPrompts.FOOTER)
             
             result = await send_dm(
                 self.bot, debt.user_id, embed=embed,
@@ -659,16 +640,82 @@ class NotificationManager:
         """Notify admin channel that user is blocked for photo debt"""
         await send_admin_channel_message(
             self.bot,
-            content=(
-                f"**User Blocked from Tool Room - Photo Debt**\n"
-                f"User: {debt.username}\n"
-                f"Tool: {debt.tool_name}\n"
-                f"Photo Type: {debt.debt_type.value}\n"
-                f"Created: {debt.created_at.strftime('%Y-%m-%d %H:%M')}\n"
-                f"Due: {debt.due_at.strftime('%Y-%m-%d %H:%M')}\n\n"
-                f"User will remain blocked until photo is provided or admin clears debt."
+            content=AdminPhotoDebtEnforcedPrompts.content(
+                debt.username,
+                debt.tool_name,
+                debt.debt_type.value,
+                debt.created_at.strftime('%Y-%m-%d %H:%M'),
+                debt.due_at.strftime('%Y-%m-%d %H:%M')
             )
         )
+    
+    # ========== DM Response Embeds ==========
+    
+    async def send_return_photo_request(self, reservation: ReservationModel) -> bool:
+        """Send DM requesting return photo when reservation expires"""
+        embed = discord.Embed(
+            title=ReturnPhotoRequestPrompts.TITLE,
+            description=ReturnPhotoRequestPrompts.description(reservation.tool_name),
+            color=Colors.WARNING
+        )
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.set_footer(text=ReturnPhotoRequestPrompts.FOOTER)
+        
+        result = await send_dm(
+            self.bot,
+            reservation.user_id,
+            embed=embed,
+            log_context=f"return photo request for {reservation.tool_name}"
+        )
+        return result.success
+    
+    def build_photo_debt_response_embed(self, debt: 'PhotoDebtModel', grace_expired: bool = False) -> discord.Embed:
+        """Build embed for photo debt blocking response"""
+        embed = discord.Embed(
+            title=PhotoDebtResponsePrompts.TITLE,
+            description=PhotoDebtResponsePrompts.description(
+                debt.tool_name, debt.debt_type.value, grace_expired
+            ),
+            color=Colors.ERROR
+        )
+        embed.add_field(name="Tool", value=debt.tool_name, inline=True)
+        embed.add_field(name="Photo Type", value=debt.debt_type.value.title(), inline=True)
+        embed.set_footer(text=PhotoDebtResponsePrompts.FOOTER)
+        return embed
+    
+    def build_start_photo_received_embed(self, reservation: ReservationModel, photo_url: str) -> discord.Embed:
+        """Build embed for start photo confirmation"""
+        embed = discord.Embed(
+            title=StartPhotoReceivedPrompts.TITLE,
+            description=StartPhotoReceivedPrompts.description(reservation.tool_name),
+            color=Colors.SUCCESS
+        )
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.set_thumbnail(url=photo_url)
+        return embed
+    
+    def build_return_photo_received_embed(self, reservation: ReservationModel, photo_url: str) -> discord.Embed:
+        """Build embed for return photo confirmation"""
+        embed = discord.Embed(
+            title=ReturnPhotoReceivedPrompts.TITLE,
+            description=ReturnPhotoReceivedPrompts.description(reservation.tool_name),
+            color=Colors.SUCCESS
+        )
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.set_thumbnail(url=photo_url)
+        return embed
+    
+    def build_no_photo_requirements_embed(self) -> discord.Embed:
+        """Build embed for when no photo requirements found"""
+        embed = discord.Embed(
+            title=NoPhotoRequirementsPrompts.TITLE,
+            description=NoPhotoRequirementsPrompts.DESCRIPTION,
+            color=Colors.INFO
+        )
+        return embed
     
     # ========== Utility Methods ==========
     
