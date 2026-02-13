@@ -975,7 +975,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             if not user_has_role:
                 await interaction.followup.send(
                     f"You need the <@&{tool.role_id}> role to sign out **{tool_name}**.\n\n"
-                    f"Please contact an admin to get access to this tool.",
+                    f"Please contact an admin or use the #ask-help channelto get access to this tool.",
                     ephemeral=True
                 )
                 logger.info(f"Role requirement blocked {username} from signing out {tool_name}")
