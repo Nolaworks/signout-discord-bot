@@ -1,5 +1,5 @@
 """
-Admin Panel for Discord Tool Signout Bot (Refactored)
+Admin Panel for Discord Tool Signout Bot
 Provides administrative commands and log management.
 """
 import os
@@ -779,11 +779,11 @@ class AdminPanel(commands.Cog):
                 await interaction.response.send_message(
                     f"Removed consecutive signout limit for **{tool_name}**.\n"
                     f"Users can now sign it out unlimited times in a row.",
-                    ephemeral=False
+                    ephemeral=True
                 )
             else:
                 await interaction.response.send_message(
-                    f"et consecutive signout limit for **{tool_name}**:\n\n"
+                    f"Set consecutive signout limit for **{tool_name}**:\n\n"
                     f"• **Maximum consecutive signouts:** {max_consecutive}\n"
                     f"• **Cooldown period:** {cooldown_hours} hours\n"
                     f"• **Auto-reset after:** {reset_after_hours} hours of inactivity\n"
@@ -793,7 +793,7 @@ class AdminPanel(commands.Cog):
                     f"{cooldown_hours} hours before signing out again.\n\n"
                     f"The counter automatically resets if {reset_after_hours} hours pass since their last signout "
                     f"AND they've accumulated less than {min_total_hours} total hours.",
-                    ephemeral=False
+                    ephemeral=True
                 )
             
             logger.info(f"Admin {interaction.user.name} set resignout limit for {tool_name}: max={max_consecutive}, "
@@ -1388,6 +1388,113 @@ class AdminPanel(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             logger.info(f"Role sync completed: {len(created)} created, {len(updated)} updated, {len(errors)} errors")
 
+    async def bulkassignrole(self, interaction: discord.Interaction):
+        """Assign the current tool's role to all members in the server"""
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
+            return
+        
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            tool = tool_repo.get_by_name(tool_name)
+            
+            if not tool or not tool.role_id:
+                await interaction.followup.send(
+                    f"**{tool_name}** doesn't have a role configured.\n\n"
+                    f"Use `/admin role toggle` first to create and enable the role.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get the role object
+            role = interaction.guild.get_role(int(tool.role_id))
+            
+            if not role:
+                await interaction.followup.send(
+                    f"Role not found. It may have been deleted.\n\n"
+                    f"Use `/admin role toggle` to recreate it.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get all members in the guild
+            members = interaction.guild.members
+            
+            assigned = []
+            already_had = []
+            errors = []
+            
+            # Assign role to each member
+            for member in members:
+                # Skip bots
+                if member.bot:
+                    continue
+                
+                # Check if member already has the role
+                if role in member.roles:
+                    already_had.append(member.name)
+                    continue
+                
+                # Try to assign the role
+                try:
+                    await member.add_roles(role, reason=f"Bulk role assignment by {interaction.user.name}")
+                    assigned.append(member.name)
+                    logger.info(f"Bulk assigned {role.name} to {member.name} for {tool_name}")
+                except discord.Forbidden:
+                    errors.append(f"{member.name} (permission denied)")
+                    logger.error(f"Permission denied assigning {role.name} to {member.name}")
+                except Exception as e:
+                    errors.append(f"{member.name} ({str(e)})")
+                    logger.error(f"Error assigning {role.name} to {member.name}: {e}")
+            
+            # Build response embed
+            embed = discord.Embed(
+                title=f"✅ Bulk Role Assignment Complete",
+                description=f"Assigned {role.mention} for **{tool_name}** to server members.",
+                color=discord.Color.green()
+            )
+            
+            if assigned:
+                # Chunk assigned list if too long
+                assigned_text = ", ".join(assigned)
+                if len(assigned_text) <= 1000:
+                    embed.add_field(
+                        name=f"✅ Assigned ({len(assigned)})",
+                        value=assigned_text,
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=f"✅ Assigned ({len(assigned)})",
+                        value=f"Assigned to {len(assigned)} members (list too long to display)",
+                        inline=False
+                    )
+            
+            if already_had:
+                already_count = len(already_had)
+                embed.add_field(
+                    name=f"ℹ️ Already Had Role ({already_count})",
+                    value=f"{already_count} members already had the role",
+                    inline=False
+                )
+            
+            if errors:
+                errors_text = "\n".join(errors[:10])  # Show first 10 errors
+                if len(errors) > 10:
+                    errors_text += f"\n...and {len(errors) - 10} more"
+                embed.add_field(
+                    name=f"❌ Errors ({len(errors)})",
+                    value=errors_text,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Total members processed: {len(assigned) + len(already_had) + len(errors)}")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            logger.info(f"Bulk role assignment for {tool_name}: {len(assigned)} assigned, {len(already_had)} already had, {len(errors)} errors")
+
     async def admin_block_all(self, interaction: discord.Interaction, tool: str, time: str, force: bool = False):
         """Apply an admin block to selected tool(s)"""
         await interaction.response.defer(thinking=True)
@@ -1860,6 +1967,12 @@ class AdminPanel(commands.Cog):
         """Sync roles - nested grouped version"""
         await self.syncroles(interaction)
     
+    @role_group.command(name="bulk", description="Assign the current tool's role to all server members")
+    @is_admin_check()
+    async def role_bulk(self, interaction: discord.Interaction):
+        """Bulk assign role to all members - nested grouped version"""
+        await self.bulkassignrole(interaction)
+    
     # ===== /admin block group commands =====
     
     @block_group.command(name="add", description="Block tool(s) for a time range")
@@ -2142,7 +2255,8 @@ class AdminPanel(commands.Cog):
                 "`/admin role toggle` - Enable/disable role requirement\n"
                 "`/admin role assign user:<name>` - Give tool access\n"
                 "`/admin role revoke user:<name>` - Remove tool access\n"
-                "`/admin role sync` - Sync all tool roles"
+                "`/admin role sync` - Sync all tool roles\n"
+                "`/admin role bulk` - Assign current tool's role to all server members"
             ),
             inline=False
         )
@@ -2194,7 +2308,7 @@ class AdminPanel(commands.Cog):
             name="Admin Tips",
             value=(
                 "• Type `/admin` to see all admin command groups\n"
-                "• **Tool Room channels** enforce photo requirements automatically\n"
+                "• **Tool Room channels** (any category with 'tool room' in name) enforce photo requirements\n"
                 "• **Role requirements** enabled by default for new tools\n"
                 "• **Re-signout limits** prevent monopolizing tools\n"
                 "• Admins bypass role checks and limit restrictions\n"

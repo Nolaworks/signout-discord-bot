@@ -41,18 +41,18 @@ fi
 
 echo ""
 echo "Step 1: Resetting database..."
-python3 helper_scripts/reset_db.py
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 helper_scripts/reset_db.py
 
 echo ""
 echo "Step 2: Running main migration..."
-python3 scripts/migrate_to_db.py --path "$SCRIPT_DIR/migration_data/"
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 scripts/migrate_to_db.py --path "$SCRIPT_DIR/migration_data/"
 
 echo ""
 echo "Step 3: Running feature migrations..."
-python3 helper_scripts/migrate_role_permissions.py
-python3 helper_scripts/migrate_photo_enforcement.py
-python3 helper_scripts/migrate_photo_table.py
-python3 helper_scripts/migrate_consecutive_signouts.py
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 helper_scripts/migrate_role_permissions.py
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 helper_scripts/migrate_photo_enforcement.py
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 helper_scripts/migrate_photo_table.py
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 helper_scripts/migrate_consecutive_signouts.py
 
 echo ""
 echo "=============================================="

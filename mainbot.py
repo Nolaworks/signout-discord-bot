@@ -746,7 +746,8 @@ async def help_cmd(interaction: discord.Interaction):
         photo_note = (
             "\n\n**Tool Room Channel**\n"
             "This channel requires photos for all signouts and returns. "
-            "This helps track tool condition and accountability."
+            "This helps track tool condition and accountability.\n"
+            "*Any category with 'tool room' in the name is a tool room.*"
         ) if is_tool_room else (
             "\n\n**Photo Optional**\n"
             "Photos are not required in this channel, but are encouraged "
@@ -856,7 +857,8 @@ async def help_cmd(interaction: discord.Interaction):
             "• Only slash commands allowed in signout channels\n"
             "• Reservations cannot overlap existing ones\n"
             "• Expired reservations are auto-archived\n"
-            "• Respect max time limits per tool"
+            "• Respect max time limits per tool\n"
+            "• Tool Room categories (any with 'tool room' in name) require photos"
         ),
         inline=False
     )

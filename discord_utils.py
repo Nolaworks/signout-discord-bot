@@ -247,17 +247,18 @@ def get_tool_from_channel_or_error(channel) -> str:
 
 def is_tool_room_channel(channel) -> bool:
     """
-    Check if channel is in the Tool Room category.
+    Check if channel is in a Tool Room category.
     
     Args:
         channel: Discord channel object
     
     Returns:
-        True if channel is in Tool Room category, False otherwise
+        True if channel category name contains "tool room" (case-insensitive), False otherwise
     """
     try:
         category = getattr(channel, "category", None)
-        return bool(category and getattr(category, "name", None) == "Tool Room")
+        category_name = getattr(category, "name", None)
+        return bool(category_name and "tool room" in category_name.lower())
     except Exception:
         return False
 
