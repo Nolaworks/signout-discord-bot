@@ -924,14 +924,13 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         await interaction.response.send_message(error_msg, ephemeral=True)
         return
     
-    await interaction.response.defer(thinking=True)
-    
     # Get user info
     user_id = get_user_id(interaction.user)
     username = interaction.user.name
     display_name = get_user_display_name(interaction.user)
     is_admin = user_is_admin(interaction.user)
     
+    # Do all validation checks BEFORE defer so we can send ephemeral error messages
     with get_db_session() as session:
         user_repo = UserRepository(session)
         tool_repo = ToolRepository(session)
@@ -958,7 +957,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
                 debts = photo_debt_repo.get_user_tool_room_debts(user_id)
                 debt_list = "\n".join([f"• **{d.tool_name}** - {d.debt_type.value} photo" for d in debts])
                 
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     f"You have outstanding photo requirements and cannot sign out Tool Room tools:\n\n"
                     f"{debt_list}\n\n"
                     f"Please contact an admin to resolve.",
@@ -973,7 +972,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             user_has_role = any(str(role.id) == tool.role_id for role in interaction.user.roles)
             
             if not user_has_role:
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     f"You need the <@&{tool.role_id}> role to sign out **{tool_name}**.\n\n"
                     f"Please contact an admin or use the #ask-help channelto get access to this tool.",
                     ephemeral=True
@@ -988,9 +987,21 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             allowed, error_msg = consecutive_repo.check_signout_allowed(user_id, username, tool.id, tool_name)
             
             if not allowed:
-                await interaction.followup.send(error_msg, ephemeral=True)
+                await interaction.response.send_message(error_msg, ephemeral=True)
                 logger.info(f"Consecutive signout limit blocked {username} from signing out {tool_name}")
                 return
+    
+    # All validation passed - now we can defer for the longer GPT/database operations
+    await interaction.response.defer(thinking=True)
+    
+    with get_db_session() as session:
+        user_repo = UserRepository(session)
+        tool_repo = ToolRepository(session)
+        res_repo = ReservationRepository(session)
+        
+        # Re-fetch for this session
+        user = user_repo.get_by_user_id(user_id)
+        tool = tool_repo.get_by_name(tool_name)
         
         # Parse time with GPT
         formatted_time = await parse_time_with_gpt(time)
