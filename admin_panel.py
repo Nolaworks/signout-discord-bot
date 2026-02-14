@@ -208,27 +208,7 @@ class AdminPanel(commands.Cog):
 
     # ========== Log Management Commands ==========
 
-    # ========== Adjust Time Commands ==========
-
-    @admin_group.command(name="adjusttime", description="[ADMIN] Adjust another user's reservation")
-    @is_admin_check()
-    @app_commands.describe(
-        user="Target username",
-        old_time="Existing reservation time",
-        choice="Part to change",
-        new_value="New time or 'cancel'",
-        merge="Merge if it overlaps their own reservation"
-    )
-    @app_commands.choices(choice=[
-        app_commands.Choice(name="start", value="start"),
-        app_commands.Choice(name="end", value="end"),
-        app_commands.Choice(name="range", value="range"),
-    ])
-    @app_commands.autocomplete(user=user_autocomplete, old_time=reservation_autocomplete)
-    async def adjust_time_admin(self, interaction: discord.Interaction, user: str, old_time: str,
-                               choice: app_commands.Choice[str], new_value: str, merge: bool = False):
-        """Admin adjust another user's reservation"""
-        await self._adjust_time_core(interaction, old_time, choice.value, new_value, user=user, merge=merge)
+    # ========== Adjust Time Helper ==========
 
     async def _adjust_time_core(self, interaction: discord.Interaction, old_time: str, 
                                choice: str, new_value: str, user: Optional[str] = None, merge: bool = False):
@@ -2012,8 +1992,8 @@ class AdminPanel(commands.Cog):
     @is_admin_check()
     async def reservation_adjust(self, interaction: discord.Interaction, user: str, old_time: str,
                                  choice: app_commands.Choice[str], new_value: str, merge: bool = False):
-        """Adjust reservation - nested grouped version"""
-        await self.adjust_time_admin(interaction, user, old_time, choice, new_value, merge)
+        """Adjust another user's reservation"""
+        await self._adjust_time_core(interaction, old_time, choice.value, new_value, user=user, merge=merge)
     
     # ===== /admin signout command (top-level) =====
     
