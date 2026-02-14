@@ -12,8 +12,8 @@ from config import get_config
 from db_session import get_db_session, init_database, close_database
 from repositories import UserRepository, ToolRepository, ReservationRepository, ReservationHistoryRepository
 from database import ReservationStatusEnum, UserModel
-from gptparse import parse_time_with_gpt
-from time_utils import parse_time_range, get_now, calculate_duration_hours, CENTRAL_TZ
+from gptparse import parse_time_with_gpt, rewrite_reservation_with_gpt
+from time_utils import parse_time_range, get_now, calculate_duration_hours, CENTRAL_TZ, format_datetime
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
     user_is_admin, user_is_developer, get_user_display_name, get_user_id,
@@ -1266,6 +1266,141 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
         )
         
         logger.info(f"Returned reservation: {res.username} - {tool_name} - {reservation}")
+
+
+@bot.tree.command(name="adjusttime", description="Adjust your reservation: change start, end, or range")
+@app_commands.describe(
+    old_time="Existing reservation time",
+    choice="Part to change",
+    new_value="New time or 'cancel'",
+    merge="Merge if it overlaps your own reservation"
+)
+@app_commands.choices(choice=[
+    app_commands.Choice(name="start", value="start"),
+    app_commands.Choice(name="end", value="end"),
+    app_commands.Choice(name="range", value="range"),
+])
+@app_commands.autocomplete(old_time=reservation_autocomplete)
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
+async def adjust_time(interaction: discord.Interaction, old_time: str, 
+                     choice: app_commands.Choice[str], new_value: str, merge: bool = False):
+    """Adjust user's own reservation"""
+    tool_name = await validate_tool_channel(interaction)
+    if tool_name is None:
+        return
+    
+    user_id = get_user_id(interaction.user)
+    username = interaction.user.name
+    
+    # Get OpenAI client (need to initialize it here)
+    from openai import AsyncOpenAI
+    ai_client = AsyncOpenAI(api_key=config.openai_api_key)
+    
+    with get_db_session() as session:
+        res_repo = ReservationRepository(session)
+        
+        # Find reservation
+        res = res_repo.get_by_user_and_time(user_id, tool_name, old_time)
+        
+        if not res:
+            await interaction.response.send_message(
+                f"Reservation `{old_time}` not found for `{username}`.",
+                ephemeral=True
+            )
+            return
+        
+        # Handle cancel
+        if new_value.lower() == "cancel":
+            res.status = ReservationStatusEnum.CANCELLED
+            res.updated_at = datetime.utcnow()
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"❌ Reservation for **{tool_name}** at `{old_time}` has been **canceled**."
+            )
+            logger.info(f"Cancelled reservation: {res.username} - {tool_name} - {old_time}")
+            return
+        
+        # Use GPT to rewrite the reservation
+        base_text = res.original_text if choice.value == "range" else res.formatted_time
+        
+        try:
+            new_range = await rewrite_reservation_with_gpt(
+                client=ai_client,
+                original_text=base_text,
+                choice=choice.value,
+                new_value=new_value,
+                tz_name="America/Chicago"
+            )
+            
+            new_start, new_end = parse_time_range(new_range, CENTRAL_TZ)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"Couldn't interpret the new time: {e}",
+                ephemeral=True
+            )
+            return
+        
+        # Validate
+        if new_end <= new_start:
+            await interaction.response.send_message(
+                "Invalid interval. End must be after start.",
+                ephemeral=True
+            )
+            return
+        
+        # Check conflicts (excluding this reservation)
+        conflicts = res_repo.check_conflicts(tool_name, new_start, new_end, exclude_reservation_id=res.id)
+        
+        # Separate self conflicts from other conflicts
+        self_conflicts = [c for c in conflicts if c.user_id == user_id]
+        other_conflicts = [c for c in conflicts if c.user_id != user_id]
+        
+        if other_conflicts:
+            conflict = other_conflicts[0]
+            await interaction.response.send_message(
+                f"Conflict with another reservation: `{conflict.formatted_time}` by {conflict.username}.",
+                ephemeral=True
+            )
+            return
+        
+        if self_conflicts and not merge:
+            conflict = self_conflicts[0]
+            await interaction.response.send_message(
+                f"Conflict with your reservation `{conflict.formatted_time}`. "
+                "Re-run with `merge: true` to combine.",
+                ephemeral=True
+            )
+            return
+        
+        # Merge self-conflicts if requested
+        if self_conflicts and merge:
+            for conflict in self_conflicts:
+                if conflict.start_time < new_start:
+                    new_start = conflict.start_time
+                if conflict.end_time > new_end:
+                    new_end = conflict.end_time
+                
+                # Mark as CANCELLED (cleanup task will archive it)
+                conflict.status = ReservationStatusEnum.CANCELLED
+            
+            new_range = f"{format_datetime(new_start)} to {format_datetime(new_end)}"
+        
+        # Update reservation
+        res.start_time = new_start
+        res.end_time = new_end
+        res.formatted_time = new_range
+        res.duration_hours = calculate_duration_hours(new_start, new_end)
+        if choice.value == "range":
+            res.original_text = new_value
+        res.updated_at = datetime.utcnow()
+        
+        session.commit()
+        
+        await interaction.response.send_message(
+            f"✔️ Reservation for **{tool_name}** updated:\n**Old:** `{old_time}`\n**New:** `{new_range}`"
+        )
+        logger.info(f"Updated reservation: {res.username} - {tool_name} - {old_time} -> {new_range}")
 
 
 @bot.tree.command(name="comment", description="Leave a comment in this channel")

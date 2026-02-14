@@ -210,27 +210,7 @@ class AdminPanel(commands.Cog):
 
     # ========== Adjust Time Commands ==========
 
-    @app_commands.command(name="adjusttime", description="Adjust your reservation: change start, end, or range")
-    @app_commands.default_permissions(administrator=False)
-    @app_commands.describe(
-        old_time="Existing reservation time",
-        choice="Part to change",
-        new_value="New time or 'cancel'",
-        merge="Merge if it overlaps your own reservation"
-    )
-    @app_commands.choices(choice=[
-        app_commands.Choice(name="start", value="start"),
-        app_commands.Choice(name="end", value="end"),
-        app_commands.Choice(name="range", value="range"),
-    ])
-    @app_commands.autocomplete(old_time=reservation_autocomplete)
-    async def adjust_time(self, interaction: discord.Interaction, old_time: str, 
-                         choice: app_commands.Choice[str], new_value: str, merge: bool = False):
-        """Adjust user's own reservation"""
-        await self._adjust_time_core(interaction, old_time, choice.value, new_value, merge=merge)
-
-    @app_commands.command(name="adjusttime_admin", description="[ADMIN] Adjust another user's reservation")
-    @app_commands.default_permissions(administrator=True)
+    @admin_group.command(name="adjusttime", description="[ADMIN] Adjust another user's reservation")
     @is_admin_check()
     @app_commands.describe(
         user="Target username",
