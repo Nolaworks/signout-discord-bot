@@ -216,9 +216,16 @@ async def rewrite_reservation_with_gpt(client: AsyncOpenAI, *,
     Returns a full normalized range 'MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM' in tz_name.
     The model must output only that line.
     """
+    # Get current time in the specified timezone for context
+    central_tz = pytz.timezone(tz_name)
+    current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
+    current_day = datetime.datetime.now(central_tz).strftime("%A")  # e.g., "Saturday"
+    
     sys = f"""You convert and rewrite human time requests into a single normalized range.
 - Timezone: {tz_name}.
+- Current date and time: {current_time} ({current_day})
 - Output EXACTLY: 'MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM' with 24h minutes.
+- When interpreting relative terms (today, tomorrow, next Tuesday, etc.), use the current date above.
 - If input is ambiguous, infer the soonest valid future times by default.
 - Never add text besides the one line.
 """
