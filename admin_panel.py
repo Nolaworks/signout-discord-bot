@@ -1171,9 +1171,30 @@ class AdminPanel(commands.Cog):
             try:
                 await user.add_roles(role, reason=f"Tool access granted by {interaction.user.name}")
                 
+                # Notify the user via DM
+                embed = discord.Embed(
+                    title="Tool Access Granted",
+                    description=f"You've been granted access to **{tool_name}**!",
+                    color=discord.Color.green()
+                )
+                embed.add_field(
+                    name="What this means",
+                    value=f"You can now sign out **{tool_name}** using `/signout` in the {tool_name} channel.",
+                    inline=False
+                )
+                embed.add_field(
+                    name="Role Assigned",
+                    value=role.mention,
+                    inline=False
+                )
+                embed.set_footer(text=f"Granted by {interaction.user.name}")
+                
+                await send_dm(self.bot, user.id, embed=embed, log_context=f"role assignment for {tool_name}")
+                
                 await interaction.followup.send(
                     f"Granted {user.mention} access to **{tool_name}**!\n\n"
-                    f"Role assigned: {role.mention}",
+                    f"Role assigned: {role.mention}\n"
+                    f"*User has been notified via DM*",
                     ephemeral=True
                 )
                 logger.info(f"{interaction.user.name} assigned {role.name} to {user.name} for {tool_name}")
