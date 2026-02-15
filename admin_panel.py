@@ -1182,11 +1182,7 @@ class AdminPanel(commands.Cog):
                     value=f"You can now sign out **{tool_name}** using `/signout` in the {tool_name} channel.",
                     inline=False
                 )
-                embed.add_field(
-                    name="Role Assigned",
-                    value=role.mention,
-                    inline=False
-                )
+    
                 embed.set_footer(text=f"Granted by {interaction.user.name}")
                 
                 await send_dm(self.bot, user.id, embed=embed, log_context=f"role assignment for {tool_name}")
