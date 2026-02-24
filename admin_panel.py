@@ -89,14 +89,12 @@ class AdminPanel(commands.Cog):
     # Main parent groups
     admin_group = app_commands.Group(
         name="admin",
-        description="[ADMIN] Administrative commands",
-        default_permissions=discord.Permissions(administrator=True)
+        description="[ADMIN] Administrative commands"
     )
     
     debug_group = app_commands.Group(
         name="debug",
-        description="[DEV] Developer debugging commands",
-        default_permissions=discord.Permissions(administrator=True)
+        description="[DEV] Developer debugging commands"
     )
     
     # Subgroups under /admin
