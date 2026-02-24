@@ -79,6 +79,38 @@ async def reservation_autocomplete(interaction: Interaction, current: str) -> Li
         ][:25]
 
 
+async def admin_user_autocomplete(interaction: Interaction, current: str) -> List[app_commands.Choice[str]]:
+    """
+    Autocomplete for usernames targeting guild members (for admin commands).
+    Returns Discord server members whose display name or username matches the search.
+
+    Args:
+        interaction: Discord interaction
+        current: Current user input
+
+    Returns:
+        List of username choices
+    """
+    if not interaction.guild:
+        return []
+
+    members = [
+        m for m in interaction.guild.members
+        if not m.bot and (
+            current.lower() in m.name.lower()
+            or (m.display_name and current.lower() in m.display_name.lower())
+        )
+    ]
+
+    # Sort alphabetically by display name
+    members.sort(key=lambda m: m.display_name.lower())
+
+    return [
+        app_commands.Choice(name=m.display_name, value=m.name)
+        for m in members
+    ][:25]
+
+
 async def tool_autocomplete(interaction: Interaction, current: str) -> List[app_commands.Choice[str]]:
     """
     Autocomplete for tool names.

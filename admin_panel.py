@@ -34,7 +34,7 @@ from discord_utils import (
     user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id,
     validate_tool_channel, send_dm
 )
-from autocomplete import user_autocomplete, reservation_autocomplete
+from autocomplete import user_autocomplete, reservation_autocomplete, admin_user_autocomplete
 from validation import validate_max_time_hours
 from exceptions import InvalidToolChannelError
 
@@ -2019,7 +2019,7 @@ class AdminPanel(commands.Cog):
         time="Time range (e.g. 'now for 2 hours' or '3pm to 5pm')",
         photo="Photo of the tool (if required)"
     )
-    @app_commands.autocomplete(user=user_autocomplete, tool=tool_autocomplete)
+    @app_commands.autocomplete(user=admin_user_autocomplete, tool=tool_autocomplete)
     @is_admin_check()
     async def admin_signout(self, interaction: discord.Interaction, user: str, tool: str, 
                            time: str, photo: discord.Attachment | None = None):
