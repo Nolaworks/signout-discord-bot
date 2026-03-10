@@ -2382,34 +2382,27 @@ class AdminPanel(commands.Cog):
             return []
     
     async def pending_reservation_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-        """Autocomplete showing reservations that have pending photos — for bulk approve"""
+        """Autocomplete showing groups of pending photos by user+tool — for bulk approve"""
         try:
             with get_db_session() as session:
                 from repositories import ReservationPhotoRepository
-                from database import ReservationPhotoModel, ReservationModel
-                from collections import Counter
                 
                 photo_repo = ReservationPhotoRepository(session)
                 pending = photo_repo.get_pending_review_photos(limit=100)
                 
-                # Group by reservation_id and count
-                res_photos = {}  # res_id -> {username, tool_name, count}
+                # Group by (username, tool_name) since reservation_id may be NULL after archival
+                groups = {}  # (username, tool_name) -> count
                 for photo in pending:
-                    rid = photo.reservation_id
-                    if rid not in res_photos:
-                        res_photos[rid] = {
-                            'username': photo.username,
-                            'tool_name': photo.tool_name,
-                            'count': 0
-                        }
-                    res_photos[rid]['count'] += 1
+                    key = (photo.username, photo.tool_name)
+                    groups[key] = groups.get(key, 0) + 1
                 
                 choices = []
-                for rid, info in res_photos.items():
-                    label = f"{info['username']} — {info['tool_name']} ({info['count']} pending) R#{rid}"
+                for (username, tool_name), count in groups.items():
+                    label = f"{username} — {tool_name} ({count} pending)"
+                    value = f"{username}|{tool_name}"
                     if current and current.lower() not in label.lower():
                         continue
-                    choices.append(app_commands.Choice(name=label[:100], value=str(rid)))
+                    choices.append(app_commands.Choice(name=label[:100], value=value[:100]))
                 
                 return choices[:25]
         except Exception as e:
@@ -2906,60 +2899,54 @@ class AdminPanel(commands.Cog):
                     ephemeral=True
                 )
     
-    @photo_group.command(name="bulkapprove", description="Admin: Approve all pending photos for a reservation")
+    @photo_group.command(name="bulkapprove", description="Admin: Approve all pending photos for a user + tool")
     @is_admin_check()
-    @app_commands.describe(reservation="Select a reservation with pending photos")
+    @app_commands.describe(reservation="Select a group of pending photos")
     @app_commands.autocomplete(reservation=pending_reservation_autocomplete)
     async def photo_bulk_approve(self, interaction: discord.Interaction, reservation: str):
-        """Bulk approve all pending photos for a reservation"""
-        try:
-            reservation_id = int(reservation)
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid reservation selection.", ephemeral=True)
+        """Bulk approve all pending photos for a user + tool combination"""
+        if '|' not in reservation:
+            await interaction.response.send_message("❌ Invalid selection.", ephemeral=True)
             return
+        
+        username, tool_name = reservation.split('|', 1)
         
         with get_db_session() as session:
             from repositories import ReservationPhotoRepository
             from database import ReservationPhotoModel
             photo_repo = ReservationPhotoRepository(session)
             
-            # Get pending photos for this reservation to show info (works even if reservation is archived)
+            # Find all pending photos for this user + tool
             pending_photos = session.query(ReservationPhotoModel).filter(
-                ReservationPhotoModel.reservation_id == reservation_id,
+                ReservationPhotoModel.username == username,
+                ReservationPhotoModel.tool_name == tool_name,
                 ReservationPhotoModel.approved.is_(None)
             ).all()
             
             if not pending_photos:
                 await interaction.response.send_message(
-                    f"ℹ️ No pending photos found for reservation ID {reservation_id}",
+                    f"ℹ️ No pending photos found for **{username}** — **{tool_name}**",
                     ephemeral=True
                 )
                 return
             
-            # Use photo metadata for display (doesn't require the reservation row to exist)
-            display_username = pending_photos[0].username
-            display_tool = pending_photos[0].tool_name
+            count = 0
+            for photo in pending_photos:
+                photo.approved = True
+                photo.reviewed_by_user_id = str(interaction.user.id)
+                photo.reviewed_by_username = interaction.user.name
+                from datetime import datetime
+                photo.reviewed_at = datetime.utcnow()
+                count += 1
             
-            count = photo_repo.bulk_approve_photos(
-                reservation_id=reservation_id,
-                reviewer_user_id=str(interaction.user.id),
-                reviewer_username=interaction.user.name
+            session.commit()
+            await interaction.response.send_message(
+                f"✅ Approved {count} photo(s)\n"
+                f"**User:** {username}\n"
+                f"**Tool:** {tool_name}",
+                ephemeral=True
             )
-            
-            if count > 0:
-                session.commit()
-                await interaction.response.send_message(
-                    f"✅ Approved {count} photo(s) for reservation ID {reservation_id}\n"
-                    f"**User:** {display_username}\n"
-                    f"**Tool:** {display_tool}",
-                    ephemeral=True
-                )
-                logger.info(f"Admin {interaction.user.name} bulk approved {count} photos for reservation {reservation_id}")
-            else:
-                await interaction.response.send_message(
-                    f"ℹ️ No pending photos found for reservation ID {reservation_id}",
-                    ephemeral=True
-                )
+            logger.info(f"Admin {interaction.user.name} bulk approved {count} photos for {username} - {tool_name}")
 
 
 async def setup(bot):
