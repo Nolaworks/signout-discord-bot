@@ -2920,17 +2920,25 @@ class AdminPanel(commands.Cog):
         
         with get_db_session() as session:
             from repositories import ReservationPhotoRepository
-            from database import ReservationModel
+            from database import ReservationPhotoModel
             photo_repo = ReservationPhotoRepository(session)
             
-            # Verify reservation exists
-            res_obj = session.query(ReservationModel).filter_by(id=reservation_id).first()
-            if not res_obj:
+            # Get pending photos for this reservation to show info (works even if reservation is archived)
+            pending_photos = session.query(ReservationPhotoModel).filter(
+                ReservationPhotoModel.reservation_id == reservation_id,
+                ReservationPhotoModel.approved.is_(None)
+            ).all()
+            
+            if not pending_photos:
                 await interaction.response.send_message(
-                    f"❌ Reservation ID {reservation_id} not found",
+                    f"ℹ️ No pending photos found for reservation ID {reservation_id}",
                     ephemeral=True
                 )
                 return
+            
+            # Use photo metadata for display (doesn't require the reservation row to exist)
+            display_username = pending_photos[0].username
+            display_tool = pending_photos[0].tool_name
             
             count = photo_repo.bulk_approve_photos(
                 reservation_id=reservation_id,
@@ -2942,8 +2950,8 @@ class AdminPanel(commands.Cog):
                 session.commit()
                 await interaction.response.send_message(
                     f"✅ Approved {count} photo(s) for reservation ID {reservation_id}\n"
-                    f"**User:** {res_obj.username}\n"
-                    f"**Tool:** {res_obj.tool_name}",
+                    f"**User:** {display_username}\n"
+                    f"**Tool:** {display_tool}",
                     ephemeral=True
                 )
                 logger.info(f"Admin {interaction.user.name} bulk approved {count} photos for reservation {reservation_id}")
