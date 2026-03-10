@@ -806,15 +806,17 @@ class NotificationManager:
             logger.warning(f"Failed to send PSI expiration reminder to {reservation.username}: {result.error_message}")
             return False
     
-    def build_welder_psi_received_embed(self, reservation: ReservationModel, psi_value: float) -> discord.Embed:
+    def build_welder_psi_received_embed(self, reservation: ReservationModel, psi_value: float, is_end: bool = False) -> discord.Embed:
         """Build embed confirming welding gas PSI was recorded"""
+        title = WelderPsiReceivedPrompts.TITLE_END if is_end else WelderPsiReceivedPrompts.TITLE_START
         embed = discord.Embed(
-            title=WelderPsiReceivedPrompts.TITLE,
-            description=WelderPsiReceivedPrompts.description(reservation.tool_name, psi_value),
+            title=title,
+            description=WelderPsiReceivedPrompts.description(reservation.tool_name, psi_value, is_end=is_end),
             color=Colors.SUCCESS
         )
         embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-        embed.add_field(name="PSI", value=f"{psi_value:.0f}", inline=True)
+        label = "End PSI" if is_end else "Start PSI"
+        embed.add_field(name=label, value=f"{psi_value:.0f}", inline=True)
         embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
         return embed
     

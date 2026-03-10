@@ -294,15 +294,15 @@ class AdminPhotoDebtUploadPrompts:
 # ========== Welder PSI Prompts ==========
 
 class WelderPsiReminderPrompts:
-    """DM reminders for missing welding gas PSI readings"""
+    """DM reminders for missing welding gas starting PSI readings"""
 
-    TITLE = "\u26a0\ufe0f Welding Gas PSI Required"
+    TITLE = "⚠️ Starting Welding Gas PSI Required"
     FOOTER = "Reply with the PSI number or use /psi in the tool channel"
 
     @staticmethod
     def description(tool_name: str, minutes_elapsed: int) -> str:
         return (
-            f"Your **{tool_name}** reservation requires a welding gas PSI reading.\n\n"
+            f"Your **{tool_name}** reservation requires a **starting** welding gas PSI reading.\n\n"
             f"Please check the regulator gauge and reply to this message with "
             f"the current **PSI number** (e.g., `2200`).\n\n"
             f"You can also use `/psi` in the signout channel.\n\n"
@@ -311,18 +311,17 @@ class WelderPsiReminderPrompts:
 
 
 class WelderPsiExpirationPrompts:
-    """DM sent once after reservation expires if PSI was never entered"""
+    """DM sent once after reservation ends requesting ending PSI reading"""
 
-    TITLE = "\u26a0\ufe0f Welding Gas PSI Still Required"
-    FOOTER = "Reply with the PSI number or use /psi in the tool channel"
+    TITLE = "⚠️ Ending Welding Gas PSI Required"
+    FOOTER = "Reply with the ending PSI number or use /psi in the tool channel"
 
     @staticmethod
     def description(tool_name: str) -> str:
         return (
-            f"Your **{tool_name}** reservation has ended but no welding gas PSI "
-            f"reading was recorded.\n\n"
-            f"Please reply to this message with the **PSI number** you observed "
-            f"(e.g., `2200`), or use `/psi` in the signout channel.\n\n"
+            f"Your **{tool_name}** reservation has ended.\n\n"
+            f"Please reply to this message with the **ending PSI number** from the "
+            f"regulator gauge (e.g., `2200`), or use `/psi` in the signout channel.\n\n"
             f"This is your only reminder — please respond at your earliest convenience."
         )
 
@@ -330,12 +329,14 @@ class WelderPsiExpirationPrompts:
 class WelderPsiReceivedPrompts:
     """Confirmation when welding gas PSI is received"""
 
-    TITLE = "\u2705 Welding Gas PSI Recorded"
+    TITLE_START = "✅ Starting PSI Recorded"
+    TITLE_END = "✅ Ending PSI Recorded"
 
     @staticmethod
-    def description(tool_name: str, psi_value: float) -> str:
+    def description(tool_name: str, psi_value: float, is_end: bool = False) -> str:
+        label = "Ending" if is_end else "Starting"
         return (
-            f"PSI reading of **{psi_value:.0f}** has been recorded for your "
+            f"{label} PSI reading of **{psi_value:.0f}** has been recorded for your "
             f"**{tool_name}** reservation.\n\nThank you!"
         )
 

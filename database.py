@@ -133,7 +133,8 @@ class ReservationModel(Base):
     photo_warning_sent_at = Column(DateTime)
     
     # Welding gas PSI tracking
-    welding_gas_psi = Column(Float, nullable=True)
+    welding_gas_psi = Column(Float, nullable=True)  # Start PSI reading
+    welding_gas_psi_end = Column(Float, nullable=True)  # End PSI reading
     psi_reminder_sent_at = Column(DateTime, nullable=True)
     
     # Timestamps
@@ -222,7 +223,8 @@ class ReservationHistoryModel(Base):
     is_admin_block = Column(Boolean, default=False, nullable=False, index=True)
     photo_urls = Column(Text)  # JSON array of photo URLs for historical records
     duration_hours = Column(Float, nullable=False)
-    welding_gas_psi = Column(Float, nullable=True)  # PSI reading for welder reservations
+    welding_gas_psi = Column(Float, nullable=True)  # Start PSI reading for welder reservations
+    welding_gas_psi_end = Column(Float, nullable=True)  # End PSI reading for welder reservations
     
     # Timestamps
     created_at = Column(DateTime, nullable=False)

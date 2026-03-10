@@ -465,6 +465,7 @@ class ReservationHistoryRepository:
             photo_urls=photo_urls_json,
             duration_hours=reservation.duration_hours,
             welding_gas_psi=getattr(reservation, 'welding_gas_psi', None),
+            welding_gas_psi_end=getattr(reservation, 'welding_gas_psi_end', None),
             created_at=reservation.created_at,
             returned_at=reservation.returned_at,
             archived_at=datetime.utcnow()
