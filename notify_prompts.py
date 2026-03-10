@@ -213,6 +213,116 @@ class NoPhotoRequirementsPrompts:
     )
 
 
+# ========== Signout Photo Instructions (DM on Tool Room signout) ==========
+
+class SignoutPhotoInstructionsPrompts:
+    """DM instructions sent when a user signs out a Tool Room tool"""
+
+    TITLE = "\U0001f4f8 Photo Instructions for Tool Room Signout"
+    FOOTER = "Simply attach your photos in this DM conversation"
+
+    @staticmethod
+    def description(tool_name: str, has_start_photo: bool = False) -> str:
+        if has_start_photo:
+            return (
+                f"Thank you for signing out **{tool_name}**!\n\n"
+                f"We received your start photo. You may send additional photos "
+                f"to better document the tool's current condition.\n\n"
+                f"**What to photograph:**\n"
+                f"\u2022 The tool from multiple angles\n"
+                f"\u2022 **Any existing blemishes, scratches, dents, or damage**\n"
+                f"\u2022 Close-ups of any wear or imperfections you notice\n"
+                f"\u2022 The overall condition of the tool and workspace\n\n"
+                f"**Why this matters:**\n"
+                f"These photos protect you by documenting the tool's condition "
+                f"at the time of signout. If damage is later reported, your photos "
+                f"serve as proof of the tool's pre-existing condition."
+            )
+        return (
+            f"Thank you for signing out **{tool_name}**!\n\n"
+            f"As a Tool Room tool, **photo documentation is required**. "
+            f"Please send photos of the tool to this DM.\n\n"
+            f"**What to photograph:**\n"
+            f"\u2022 The tool from multiple angles\n"
+            f"\u2022 **Any existing blemishes, scratches, dents, or damage**\n"
+            f"\u2022 Close-ups of any wear or imperfections you notice\n"
+            f"\u2022 The overall condition of the tool and workspace\n\n"
+            f"**Why this matters:**\n"
+            f"These photos protect you by documenting the tool's condition "
+            f"at the time of signout. If damage is later reported, your photos "
+            f"serve as proof of the tool's pre-existing condition.\n\n"
+            f"**Deadline:** Photos must be submitted within **10 minutes** of "
+            f"your reservation start time, or your reservation may be cancelled."
+        )
+
+
+# ========== Photo Debt Upload Received ==========
+
+class PhotoDebtUploadReceivedPrompts:
+    """Confirmation when a user with photo debt uploads photos via DM"""
+
+    TITLE = "\u2709\ufe0f Photos Submitted for Review"
+    FOOTER = "An admin will review your photos shortly"
+
+    @staticmethod
+    def description(tool_name: str, debt_type: str, photo_count: int) -> str:
+        return (
+            f"Your {photo_count} photo(s) for **{tool_name}** ({debt_type} photo) "
+            f"have been submitted and attached to your signout record.\n\n"
+            f"**An admin will review your photos.** Once approved, your photo debt "
+            f"will be cleared and you can resume signing out Tool Room tools.\n\n"
+            f"Please be patient \u2014 you'll be notified when the review is complete."
+        )
+
+
+class AdminPhotoDebtUploadPrompts:
+    """Admin notification when user with photo debt uploads photos"""
+
+    @staticmethod
+    def content(username: str, tool_name: str, debt_type: str, photo_count: int, reservation_id: int) -> str:
+        return (
+            f"**Photo Debt - Photos Submitted for Review**\n"
+            f"User: {username}\n"
+            f"Tool: {tool_name}\n"
+            f"Photo Type: {debt_type}\n"
+            f"Photos Uploaded: {photo_count}\n"
+            f"Reservation ID: {reservation_id}\n\n"
+            f"Use `/admin photo review` to approve or reject these photos."
+        )
+
+
+# ========== Welder PSI Prompts ==========
+
+class WelderPsiReminderPrompts:
+    """DM reminders for missing welding gas PSI readings"""
+
+    TITLE = "\u26a0\ufe0f Welding Gas PSI Required"
+    FOOTER = "Reply with the PSI number or use /psi in the tool channel"
+
+    @staticmethod
+    def description(tool_name: str, minutes_elapsed: int) -> str:
+        return (
+            f"Your **{tool_name}** reservation requires a welding gas PSI reading.\n\n"
+            f"Please check the regulator gauge and reply to this message with "
+            f"the current **PSI number** (e.g., `2200`).\n\n"
+            f"You can also use `/psi` in the signout channel.\n\n"
+            f"*It has been {minutes_elapsed} minute(s) since your signout.*"
+        )
+
+
+class WelderPsiReceivedPrompts:
+    """Confirmation when welding gas PSI is received"""
+
+    TITLE = "\u2705 Welding Gas PSI Recorded"
+
+    @staticmethod
+    def description(tool_name: str, psi_value: float) -> str:
+        return (
+            f"PSI reading of **{psi_value:.0f}** has been recorded for your "
+            f"**{tool_name}** reservation.\n\nThank you!"
+        )
+
+
 # ========== Admin Channel Notifications ==========
 
 class AdminPhotoCancellationPrompts:

@@ -19,3 +19,6 @@ history.csv.*
 .env
 .env.*
 
+# Database backups
+backups/
+

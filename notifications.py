@@ -20,7 +20,9 @@ from notify_prompts import (
     PhotoWarningPrompts, PhotoCancellationPrompts, PhotoDebtEnforcementPrompts,
     ReturnPhotoRequestPrompts, ReturnToolPhotoRequestPrompts, PhotoDebtResponsePrompts, 
     StartPhotoReceivedPrompts, ReturnPhotoReceivedPrompts, NoPhotoRequirementsPrompts,
-    AdminPhotoCancellationPrompts, AdminPhotoDebtEnforcedPrompts, DailySummaryPrompts
+    AdminPhotoCancellationPrompts, AdminPhotoDebtEnforcedPrompts, DailySummaryPrompts,
+    SignoutPhotoInstructionsPrompts, PhotoDebtUploadReceivedPrompts,
+    AdminPhotoDebtUploadPrompts, WelderPsiReminderPrompts, WelderPsiReceivedPrompts
 )
 
 logger = logging.getLogger(__name__)
@@ -727,6 +729,121 @@ class NotificationManager:
         embed.add_field(name="Tool", value=tool_name, inline=True)
         embed.add_field(name="Reservation", value=f"`{reservation}`", inline=False)
         embed.set_footer(text=ReturnToolPhotoRequestPrompts.FOOTER)
+        return embed
+    
+    # ========== Signout Photo Instructions DM (Task 1) ==========
+    
+    async def send_signout_photo_instructions(self, reservation: ReservationModel, has_start_photo: bool = False) -> bool:
+        """Send DM with detailed photo instructions when user signs out a Tool Room tool"""
+        tool_name = reservation.tool_name
+        
+        embed = discord.Embed(
+            title=SignoutPhotoInstructionsPrompts.TITLE,
+            description=SignoutPhotoInstructionsPrompts.description(tool_name, has_start_photo),
+            color=Colors.INFO
+        )
+        embed.add_field(name="Tool", value=tool_name, inline=True)
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.set_footer(text=SignoutPhotoInstructionsPrompts.FOOTER)
+        
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"signout photo instructions for {tool_name}"
+        )
+        
+        if result.success:
+            logger.info(f"Sent signout photo instructions to {reservation.username} for {tool_name}")
+        else:
+            logger.warning(f"Failed to send photo instructions to {reservation.username}: {result.error_message}")
+        
+        return result.success
+    
+    # ========== Photo Debt Upload Embeds (Task 2) ==========
+    
+    def build_photo_debt_upload_received_embed(self, debt: 'PhotoDebtModel', photo_url: str, photo_count: int) -> discord.Embed:
+        """Build embed confirming photo debt upload was received and sent to admin for review"""
+        embed = discord.Embed(
+            title=PhotoDebtUploadReceivedPrompts.TITLE,
+            description=PhotoDebtUploadReceivedPrompts.description(
+                debt.tool_name, debt.debt_type.value, photo_count
+            ),
+            color=Colors.WARNING
+        )
+        embed.add_field(name="Tool", value=debt.tool_name, inline=True)
+        embed.add_field(name="Photo Type", value=debt.debt_type.value.title(), inline=True)
+        embed.set_thumbnail(url=photo_url)
+        embed.set_footer(text=PhotoDebtUploadReceivedPrompts.FOOTER)
+        return embed
+    
+    # ========== Welder PSI Methods (Task 3) ==========
+    
+    async def check_welder_psi_reminders(self, session: Session) -> int:
+        """Check for welder reservations missing PSI and send reminders"""
+        now = get_now(CENTRAL_TZ)
+        now_naive = to_naive(now)
+        sent_count = 0
+        
+        # Find active reservations for welder tools that are missing PSI
+        # and have started (past start_time)
+        from database import ReservationStatusEnum as RSE
+        from repositories import ToolRepository
+        
+        active_welder_reservations = session.query(ReservationModel).filter(
+            ReservationModel.status == RSE.ACTIVE,
+            ReservationModel.welding_gas_psi.is_(None),
+            ReservationModel.start_time <= now_naive,
+            ReservationModel.tool_name.ilike('%welder%')
+        ).all()
+        
+        for reservation in active_welder_reservations:
+            start_aware = to_aware(reservation.start_time)
+            minutes_since_start = (now - start_aware).total_seconds() / 60
+            
+            # Only remind within the 10-minute grace window
+            if minutes_since_start > 10:
+                continue
+            
+            # Don't re-send if already reminded
+            if reservation.psi_reminder_sent_at:
+                continue
+            
+            # Send reminder after 1 minute to give them a chance to enter it
+            if minutes_since_start < 1:
+                continue
+            
+            embed = discord.Embed(
+                title=WelderPsiReminderPrompts.TITLE,
+                description=WelderPsiReminderPrompts.description(
+                    reservation.tool_name, int(minutes_since_start)
+                ),
+                color=Colors.WARNING
+            )
+            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+            embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+            embed.set_footer(text=WelderPsiReminderPrompts.FOOTER)
+            
+            result = await send_dm(
+                self.bot, reservation.user_id, embed=embed,
+                log_context=f"welder PSI reminder for {reservation.tool_name}"
+            )
+            
+            if result.success:
+                reservation.psi_reminder_sent_at = datetime.utcnow()
+                sent_count += 1
+                logger.info(f"Sent welder PSI reminder to {reservation.username} for {reservation.tool_name}")
+        
+        return sent_count
+    
+    def build_welder_psi_received_embed(self, reservation: ReservationModel, psi_value: float) -> discord.Embed:
+        """Build embed confirming welding gas PSI was recorded"""
+        embed = discord.Embed(
+            title=WelderPsiReceivedPrompts.TITLE,
+            description=WelderPsiReceivedPrompts.description(reservation.tool_name, psi_value),
+            color=Colors.SUCCESS
+        )
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.add_field(name="PSI", value=f"{psi_value:.0f}", inline=True)
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
         return embed
     
     # ========== Utility Methods ==========

@@ -464,6 +464,7 @@ class ReservationHistoryRepository:
             is_admin_block=(status_value == ReservationStatusEnum.ADMIN_BLOCK.value),
             photo_urls=photo_urls_json,
             duration_hours=reservation.duration_hours,
+            welding_gas_psi=getattr(reservation, 'welding_gas_psi', None),
             created_at=reservation.created_at,
             returned_at=reservation.returned_at,
             archived_at=datetime.utcnow()

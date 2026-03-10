@@ -179,10 +179,13 @@ async def notification_check_task():
             notified_debt_ids = photo_results.get('notified_debt_ids', [])
             blocked_count = await notification_manager.check_photo_debt_enforcement(session, skip_debt_ids=notified_debt_ids)
             
+            # Check for welder reservations missing PSI readings
+            psi_reminders = await notification_manager.check_welder_psi_reminders(session)
+            
             session.commit()
             
             # Log if notifications were sent
-            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0)
+            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0) + psi_reminders
             photo_actions = photo_results.get('reservations_cancelled', 0) + blocked_count
             
             if total_notifications > 0 or photo_actions > 0:
@@ -190,7 +193,8 @@ async def notification_check_task():
                     f"Notifications sent: {upcoming_count} reminders, {expiring_count} warnings, "
                     f"{waitlist_count} waitlist, {photo_results.get('warnings_sent', 0)} photo warnings, "
                     f"{photo_results.get('reservations_cancelled', 0)} cancelled for missing photos, "
-                    f"{blocked_count} users blocked for photo debts"
+                    f"{blocked_count} users blocked for photo debts, "
+                    f"{psi_reminders} welder PSI reminders"
                 )
     except Exception as e:
         logger.error(f"Error in notification check task: {e}", exc_info=True)
@@ -225,9 +229,15 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    # Handle DM photo uploads
+    # Handle DM photo uploads and PSI text input
     if isinstance(message.channel, discord.DMChannel):
-        await handle_dm_photo_upload(message)
+        # Check for photo attachments first
+        if message.attachments:
+            await handle_dm_photo_upload(message)
+            return
+        # Check for PSI text input (welder gas reading)
+        if message.content and message.content.strip():
+            await handle_dm_psi_input(message)
         return
     
     # Handle signout channel restrictions
@@ -288,14 +298,52 @@ async def handle_dm_photo_upload(message: discord.Message):
             else:
                 start_debts.append(debt)
         
-        # Block if user has START photo debts OR expired return debts (both require admin)
+        # If user has START photo debts OR expired return debts, allow photo upload
+        # but route photos to the offending reservation for admin review (Task 2)
         if start_debts or return_debts_expired:
             debt = start_debts[0] if start_debts else return_debts_expired[0]
-            grace_expired = debt.debt_type == PhotoDebtTypeEnum.RETURN
             
-            embed = notification_manager.build_photo_debt_response_embed(debt, grace_expired)
+            # Find the reservation associated with this debt
+            from database import ReservationPhotoModel, PhotoTypeEnum, ReservationModel
+            from repositories import ReservationPhotoRepository
+            
+            photo_repo = ReservationPhotoRepository(session)
+            
+            # Determine photo type based on debt type
+            photo_type = PhotoTypeEnum.START if debt.debt_type == PhotoDebtTypeEnum.START else PhotoTypeEnum.RETURN
+            
+            # Add all photos from this message to the offending reservation
+            photos_added = 0
+            for photo in photos:
+                photo_repo.add_photo(
+                    reservation_id=debt.reservation_id,
+                    photo_type=photo_type,
+                    photo_url=photo.url,
+                    user_id=user_id,
+                    username=username,
+                    tool_name=debt.tool_name
+                )
+                photos_added += 1
+            
+            session.commit()
+            
+            # Send confirmation to user
+            embed = notification_manager.build_photo_debt_upload_received_embed(
+                debt, photos[0].url, photos_added
+            )
             await message.channel.send(embed=embed)
-            logger.info(f"User {username} attempted to clear {debt.debt_type.value} photo debt via DM - requires admin (grace expired: {grace_expired})")
+            
+            # Notify admin channel
+            from notify_prompts import AdminPhotoDebtUploadPrompts
+            await send_admin_channel_message(
+                bot,
+                content=AdminPhotoDebtUploadPrompts.content(
+                    username, debt.tool_name, debt.debt_type.value,
+                    photos_added, debt.reservation_id
+                )
+            )
+            
+            logger.info(f"User {username} uploaded {photos_added} photo(s) for photo debt on {debt.tool_name} (reservation {debt.reservation_id}) - sent for admin review")
             return
         
         # PRIORITY 1: Check for EXPIRED or RETURNED reservations needing return photos (Tool Room only)
@@ -419,6 +467,75 @@ async def handle_dm_photo_upload(message: discord.Message):
         # No reservations found needing photos
         embed = notification_manager.build_no_photo_requirements_embed()
         await message.channel.send(embed=embed)
+
+
+async def handle_dm_psi_input(message: discord.Message):
+    """Handle welding gas PSI input via DM text message"""
+    import re
+    
+    text = message.content.strip()
+    
+    # Try to extract a PSI number from the message
+    # Accept formats like: "2200", "PSI 2200", "2200 psi", "psi: 2200"
+    psi_match = re.search(r'(\d+(?:\.\d+)?)', text)
+    if not psi_match:
+        return  # Not a PSI input, ignore silently
+    
+    psi_value = float(psi_match.group(1))
+    
+    # Validate reasonable PSI range (0-10000)
+    if psi_value < 0 or psi_value > 10000:
+        return  # Ignore unreasonable values silently
+    
+    user_id = get_user_id(message.author)
+    username = message.author.name
+    
+    with get_db_session() as session:
+        res_repo = ReservationRepository(session)
+        
+        # Look for active welder reservations for this user that are missing PSI
+        from sqlalchemy import and_
+        from database import ReservationModel
+        
+        welder_reservations = session.query(ReservationModel).filter(
+            and_(
+                ReservationModel.user_id == user_id,
+                ReservationModel.status == ReservationStatusEnum.ACTIVE,
+                ReservationModel.welding_gas_psi.is_(None),
+                ReservationModel.tool_name.ilike('%welder%')
+            )
+        ).order_by(ReservationModel.start_time.desc()).all()
+        
+        if not welder_reservations:
+            return  # No welder reservations needing PSI
+        
+        # Use the most recent welder reservation
+        reservation = welder_reservations[0]
+        
+        # Check if within the grace window (10 min before start to 10 min after start)
+        from time_utils import get_now, CENTRAL_TZ, to_aware
+        now = get_now(CENTRAL_TZ)
+        start_aware = to_aware(reservation.start_time)
+        
+        time_diff_minutes = (now - start_aware).total_seconds() / 60
+        
+        # Allow PSI input from 10 min before start to 10 min after start
+        if time_diff_minutes < -10 or time_diff_minutes > 10:
+            await message.channel.send(
+                f"The PSI entry window for **{reservation.tool_name}** has passed "
+                f"(10 minutes before to 10 minutes after signout start).\n"
+                f"You can use `/psi` in the signout channel to enter it."
+            )
+            return
+        
+        # Record the PSI value
+        reservation.welding_gas_psi = psi_value
+        session.commit()
+        
+        # Send confirmation
+        embed = notification_manager.build_welder_psi_received_embed(reservation, psi_value)
+        await message.channel.send(embed=embed)
+        logger.info(f"Recorded welding gas PSI {psi_value} via DM for {username} - {reservation.tool_name}")
 
 
 # ========== Notification and Waitlist Commands ==========
@@ -1123,6 +1240,30 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
                 f"**How to send:** Click on the bot's name and send a photo in the DM chat.",
                 ephemeral=True
             )
+            
+            # Send detailed photo instructions DM (Task 1)
+            if notification_manager:
+                await notification_manager.send_signout_photo_instructions(reservation, has_start_photo=False)
+            
+            # Send welder PSI prompt if this is a welder tool (Task 3)
+            if 'welder' in tool_name.lower() and notification_manager:
+                from notify_prompts import WelderPsiReminderPrompts
+                embed = discord.Embed(
+                    title=WelderPsiReminderPrompts.TITLE,
+                    description=(
+                        f"Your **{tool_name}** reservation requires a welding gas PSI reading.\n\n"
+                        f"Please check the regulator gauge and either:\n"
+                        f"• Use `/psi` in the signout channel\n"
+                        f"• Reply to this DM with the PSI number (e.g., `2200`)\n\n"
+                        f"You have **10 minutes** from your reservation start to provide the reading."
+                    ),
+                    color=discord.Color.orange()
+                )
+                embed.add_field(name="Tool", value=tool_name, inline=True)
+                embed.add_field(name="Reservation", value=formatted_time, inline=False)
+                embed.set_footer(text="Reply with the PSI number or use /psi in the tool channel")
+                await send_dm(bot, user_id, embed=embed, log_context=f"welder PSI prompt for {tool_name}")
+            
             logger.info(f"Created reservation: {username} - {tool_name} - {formatted_time}")
             return
         
@@ -1138,6 +1279,29 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             await interaction.followup.send(message, files=files)
         else:
             await interaction.followup.send(message)
+        
+        # Send detailed photo instructions DM for Tool Room signouts with photo (Task 1)
+        if photo_required and photo_url and notification_manager:
+            await notification_manager.send_signout_photo_instructions(reservation, has_start_photo=True)
+        
+        # Send welder PSI prompt if this is a welder tool (Task 3)
+        if 'welder' in tool_name.lower() and notification_manager:
+            from notify_prompts import WelderPsiReminderPrompts
+            embed = discord.Embed(
+                title=WelderPsiReminderPrompts.TITLE,
+                description=(
+                    f"Your **{tool_name}** reservation requires a welding gas PSI reading.\n\n"
+                    f"Please check the regulator gauge and either:\n"
+                    f"• Use `/psi` in the signout channel\n"
+                    f"• Reply to this DM with the PSI number (e.g., `2200`)\n\n"
+                    f"You have **10 minutes** from your reservation start to provide the reading."
+                ),
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="Tool", value=tool_name, inline=True)
+            embed.add_field(name="Reservation", value=formatted_time, inline=False)
+            embed.set_footer(text="Reply with the PSI number or use /psi in the tool channel")
+            await send_dm(bot, user_id, embed=embed, log_context=f"welder PSI prompt for {tool_name}")
         
         logger.info(f"Created reservation: {username} - {tool_name} - {formatted_time}")
 
@@ -1434,6 +1598,78 @@ async def comment(interaction: discord.Interaction, comment: str):
     
     display_name = get_user_display_name(interaction.user)
     await interaction.response.send_message(f"**{display_name}** says: {comment}")
+
+
+@bot.tree.command(name="psi", description="Record welding gas PSI for your welder reservation")
+@app_commands.describe(value="Current welding gas PSI reading from the regulator gauge")
+@app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
+async def psi_command(interaction: discord.Interaction, value: float):
+    """Record welding gas PSI for a welder reservation"""
+    tool_name = await validate_tool_channel(interaction)
+    if tool_name is None:
+        return
+    
+    # Verify this is a welder tool
+    if 'welder' not in tool_name.lower():
+        await interaction.response.send_message(
+            "The `/psi` command is only available for welder tools.",
+            ephemeral=True
+        )
+        return
+    
+    # Validate PSI range
+    if value < 0 or value > 10000:
+        await interaction.response.send_message(
+            "Please enter a valid PSI value (0-10000).",
+            ephemeral=True
+        )
+        return
+    
+    user_id = get_user_id(interaction.user)
+    username = interaction.user.name
+    
+    with get_db_session() as session:
+        res_repo = ReservationRepository(session)
+        
+        # Find active welder reservation for this user
+        from sqlalchemy import and_
+        from database import ReservationModel as RM
+        
+        reservation = session.query(RM).filter(
+            and_(
+                RM.user_id == user_id,
+                RM.tool_name == tool_name,
+                RM.status == ReservationStatusEnum.ACTIVE,
+            )
+        ).order_by(RM.start_time.desc()).first()
+        
+        if not reservation:
+            await interaction.response.send_message(
+                f"No active reservation found for **{tool_name}**.",
+                ephemeral=True
+            )
+            return
+        
+        # Optionally check the 10-min grace window
+        from time_utils import get_now, CENTRAL_TZ, to_aware
+        now = get_now(CENTRAL_TZ)
+        start_aware = to_aware(reservation.start_time)
+        time_diff_minutes = (now - start_aware).total_seconds() / 60
+        
+        if time_diff_minutes < -10:
+            await interaction.response.send_message(
+                f"Your reservation hasn't started yet. You can enter PSI within 10 minutes before or after your signout starts.",
+                ephemeral=True
+            )
+            return
+        
+        # Record PSI (allow even after 10 min - just no penalty)
+        reservation.welding_gas_psi = value
+        session.commit()
+        
+        embed = notification_manager.build_welder_psi_received_embed(reservation, value)
+        await interaction.response.send_message(embed=embed)
+        logger.info(f"Recorded welding gas PSI {value} via /psi for {username} - {tool_name}")
 
 
 @bot.event
