@@ -22,7 +22,7 @@ from notify_prompts import (
     StartPhotoReceivedPrompts, ReturnPhotoReceivedPrompts, NoPhotoRequirementsPrompts,
     AdminPhotoCancellationPrompts, AdminPhotoDebtEnforcedPrompts, DailySummaryPrompts,
     SignoutPhotoInstructionsPrompts, PhotoDebtUploadReceivedPrompts,
-    AdminPhotoDebtUploadPrompts, WelderPsiReminderPrompts, WelderPsiReceivedPrompts
+    AdminPhotoDebtUploadPrompts, WelderPsiReceivedPrompts
 )
 
 logger = logging.getLogger(__name__)
@@ -777,62 +777,34 @@ class NotificationManager:
     
     # ========== Welder PSI Methods (Task 3) ==========
     
-    async def check_welder_psi_reminders(self, session: Session) -> int:
-        """Check for welder reservations missing PSI and send reminders"""
-        now = get_now(CENTRAL_TZ)
-        now_naive = to_naive(now)
-        sent_count = 0
+    async def send_welder_psi_expiration_reminder(self, reservation: ReservationModel) -> bool:
+        """Send a single DM after reservation expires if PSI was never recorded.
         
-        # Find active reservations for welder tools that are missing PSI
-        # and have started (past start_time)
-        from database import ReservationStatusEnum as RSE
-        from repositories import ToolRepository
+        Called once from clean_expired_signouts() at the moment the reservation
+        transitions to EXPIRED.  No background loop, no repeat sends.
+        """
+        from notify_prompts import WelderPsiExpirationPrompts
         
-        active_welder_reservations = session.query(ReservationModel).filter(
-            ReservationModel.status == RSE.ACTIVE,
-            ReservationModel.welding_gas_psi.is_(None),
-            ReservationModel.start_time <= now_naive,
-            ReservationModel.tool_name.ilike('%welder%')
-        ).all()
+        embed = discord.Embed(
+            title=WelderPsiExpirationPrompts.TITLE,
+            description=WelderPsiExpirationPrompts.description(reservation.tool_name),
+            color=Colors.WARNING
+        )
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.set_footer(text=WelderPsiExpirationPrompts.FOOTER)
         
-        for reservation in active_welder_reservations:
-            start_aware = to_aware(reservation.start_time)
-            minutes_since_start = (now - start_aware).total_seconds() / 60
-            
-            # Only remind within the 10-minute grace window
-            if minutes_since_start > 10:
-                continue
-            
-            # Don't re-send if already reminded
-            if reservation.psi_reminder_sent_at:
-                continue
-            
-            # Send reminder after 1 minute to give them a chance to enter it
-            if minutes_since_start < 1:
-                continue
-            
-            embed = discord.Embed(
-                title=WelderPsiReminderPrompts.TITLE,
-                description=WelderPsiReminderPrompts.description(
-                    reservation.tool_name, int(minutes_since_start)
-                ),
-                color=Colors.WARNING
-            )
-            embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
-            embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
-            embed.set_footer(text=WelderPsiReminderPrompts.FOOTER)
-            
-            result = await send_dm(
-                self.bot, reservation.user_id, embed=embed,
-                log_context=f"welder PSI reminder for {reservation.tool_name}"
-            )
-            
-            if result.success:
-                reservation.psi_reminder_sent_at = datetime.utcnow()
-                sent_count += 1
-                logger.info(f"Sent welder PSI reminder to {reservation.username} for {reservation.tool_name}")
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"welder PSI expiration reminder for {reservation.tool_name}"
+        )
         
-        return sent_count
+        if result.success:
+            logger.info(f"Sent welder PSI expiration reminder to {reservation.username} for {reservation.tool_name}")
+            return True
+        else:
+            logger.warning(f"Failed to send PSI expiration reminder to {reservation.username}: {result.error_message}")
+            return False
     
     def build_welder_psi_received_embed(self, reservation: ReservationModel, psi_value: float) -> discord.Embed:
         """Build embed confirming welding gas PSI was recorded"""

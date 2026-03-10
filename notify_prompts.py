@@ -310,6 +310,23 @@ class WelderPsiReminderPrompts:
         )
 
 
+class WelderPsiExpirationPrompts:
+    """DM sent once after reservation expires if PSI was never entered"""
+
+    TITLE = "\u26a0\ufe0f Welding Gas PSI Still Required"
+    FOOTER = "Reply with the PSI number or use /psi in the tool channel"
+
+    @staticmethod
+    def description(tool_name: str) -> str:
+        return (
+            f"Your **{tool_name}** reservation has ended but no welding gas PSI "
+            f"reading was recorded.\n\n"
+            f"Please reply to this message with the **PSI number** you observed "
+            f"(e.g., `2200`), or use `/psi` in the signout channel.\n\n"
+            f"This is your only reminder — please respond at your earliest convenience."
+        )
+
+
 class WelderPsiReceivedPrompts:
     """Confirmation when welding gas PSI is received"""
 

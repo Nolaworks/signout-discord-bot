@@ -104,6 +104,13 @@ async def clean_expired_signouts():
                                 if success:
                                     logger.info(f"Sent return photo request DM: {reservation.username} - {reservation.tool_name}")
                     
+                    # For welder tools, send a single PSI reminder if PSI was never entered
+                    if 'welder' in reservation.tool_name.lower() and reservation.welding_gas_psi is None:
+                        if notification_manager:
+                            success = await notification_manager.send_welder_psi_expiration_reminder(reservation)
+                            if success:
+                                logger.info(f"Sent welder PSI expiration reminder: {reservation.username} - {reservation.tool_name}")
+                    
                     reservation.status = ReservationStatusEnum.EXPIRED
                     logger.info(f"Marked as expired: {reservation.username} - {reservation.tool_name} (was {old_status.value})")
                 session.commit()
@@ -179,13 +186,10 @@ async def notification_check_task():
             notified_debt_ids = photo_results.get('notified_debt_ids', [])
             blocked_count = await notification_manager.check_photo_debt_enforcement(session, skip_debt_ids=notified_debt_ids)
             
-            # Check for welder reservations missing PSI readings
-            psi_reminders = await notification_manager.check_welder_psi_reminders(session)
-            
             session.commit()
             
             # Log if notifications were sent
-            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0) + psi_reminders
+            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0)
             photo_actions = photo_results.get('reservations_cancelled', 0) + blocked_count
             
             if total_notifications > 0 or photo_actions > 0:
@@ -193,8 +197,7 @@ async def notification_check_task():
                     f"Notifications sent: {upcoming_count} reminders, {expiring_count} warnings, "
                     f"{waitlist_count} waitlist, {photo_results.get('warnings_sent', 0)} photo warnings, "
                     f"{photo_results.get('reservations_cancelled', 0)} cancelled for missing photos, "
-                    f"{blocked_count} users blocked for photo debts, "
-                    f"{psi_reminders} welder PSI reminders"
+                    f"{blocked_count} users blocked for photo debts"
                 )
     except Exception as e:
         logger.error(f"Error in notification check task: {e}", exc_info=True)
