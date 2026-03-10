@@ -851,8 +851,11 @@ async def help_cmd(interaction: discord.Interaction):
     is_tool_room = is_tool_room_channel(ch)
     
     embed = discord.Embed(
-        title=" Signout System Help",
-        description="Reserve and manage tool signouts with ease!",
+        title="📋 Signout System Help",
+        description=(
+            "Reserve tools, track usage, and manage signouts — all through slash commands.\n"
+            "Navigate to a `#signout-<tool>` channel and use the commands below."
+        ),
         color=discord.Color.blue()
     )
     
@@ -863,130 +866,152 @@ async def help_cmd(interaction: discord.Interaction):
             tool = tool_repo.get_by_name(tool_name)
             max_time = tool.max_time_hours if tool else config.default_max_time_hours
         
+        is_welder = 'welder' in tool_name.lower()
+        
         photo_note = (
-            "\n\n**Tool Room Channel**\n"
-            "This channel requires photos for all signouts and returns. "
-            "This helps track tool condition and accountability.\n"
-            "*Any category with 'tool room' in the name is a tool room.*"
+            "\n📸 **Tool Room Channel** — Photos are **required** at signout and return. "
+            "You'll receive a DM with instructions on what to photograph (including any "
+            "existing blemishes or damage). Photos protect you by documenting the tool's condition."
         ) if is_tool_room else (
-            "\n\n**Photo Optional**\n"
-            "Photos are not required in this channel, but are encouraged "
-            "for documentation purposes."
+            "\nPhotos are optional in this channel but encouraged for documentation."
         )
         
+        welder_note = (
+            "\n🔥 **Welder Tool** — A welding gas PSI reading is required. "
+            "You'll be prompted via DM at signout. Enter the reading with `/psi` or reply to the DM."
+        ) if is_welder else ""
+        
         embed.add_field(
-            name=" Current Channel",
-            value=f"**Tool:** `{tool_name}`\n**Max time:** `{max_time}h`{photo_note}",
+            name="📍 Current Channel",
+            value=f"**Tool:** `{tool_name}`\n**Max reservation:** `{max_time}h`{photo_note}{welder_note}",
             inline=False
         )
     else:
         embed.add_field(
-            name="Getting Started",
-            value="Use these commands inside a `#signout-<tool>` channel",
+            name="📍 Getting Started",
+            value=(
+                "Head to any `#signout-<tool>` channel to reserve that tool.\n"
+                "All reservation commands must be run inside a signout channel."
+            ),
             inline=False
         )
     
     # User commands
     photo_req = (
-        "\n\n**Photo Required:** Must attach image when signing out\n"
+        "\n📸 **Photo required** — attach an image or send one via DM within 10 minutes."
     ) if is_tool_room else (
-        "\n\nPhoto optional but recommended for documentation\n"
+        "\nPhoto optional but recommended for documentation."
     )
     
     embed.add_field(
-        name="Reserve a Tool",
+        name="🔧 `/signout time:<text> [photo]`",
         value=(
-            "`/signout time:<text> [photo]`\n"
-            "Create a reservation for this tool.\n\n"
-            "**Time examples:**\n"
-            "• `now for 2 hours` - Start immediately\n"
-            "• `3pm to 5pm` - Today from 3pm-5pm\n"
-            "• `tomorrow 10-12` - Tomorrow 10am-12pm\n"
-            "• `friday 2pm-4pm` - Specific day and time"
+            "Reserve the tool for a time range. Uses natural language — just describe when you need it.\n\n"
+            "**Examples:**\n"
+            "• `now for 2 hours` — start immediately\n"
+            "• `3pm to 5pm` — today, specific window\n"
+            "• `tomorrow 10am-12pm` — future date\n"
+            "• `friday 2pm-4pm` — day of the week"
             + photo_req
         ),
         inline=False
     )
     
     embed.add_field(
-        name="View Reservations",
-        value="`/reservations` - See all active reservations for this tool",
+        name="📄 `/reservations`",
+        value="View all active reservations for the tool in this channel, including who has it and when.",
         inline=False
     )
     
-    return_photo_req = (
-        "\n\n**Photo Required:** Must attach image when returning\n"
-    ) if is_tool_room else (
-        "\n\nPhoto optional but recommended to show tool condition\n"
-    )
+    return_photo_note = (
+        "\n📸 Tool Room tools require a return photo — you'll get a DM with a 30-minute deadline."
+    ) if is_tool_room else ""
     
     embed.add_field(
-        name="Return a Tool",
+        name="↩️ `/returntool reservation:<pick>`",
         value=(
-            "`/returntool reservation:<pick> [photo]`\n"
-            "Mark your reservation as complete and return the tool.\n\n"
-            "Start typing to autocomplete your reservation from the list."
-            + return_photo_req
+            "Return the tool early and free up the remaining time for others. "
+            "Start typing to autocomplete your reservation."
+            + return_photo_note
         ),
         inline=False
     )
     
     embed.add_field(
-        name="Cancel a Reservation",
+        name="❌ `/cancel reservation:<pick>`",
+        value="Cancel a reservation you no longer need. This immediately frees the time slot.",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⏱️ `/adjusttime old_time:<pick> choice:<start|end|range> new_value:<text>`",
         value=(
-            "`/cancel reservation:<pick>`\n"
-            "Cancel a reservation you no longer need.\n\n"
-            "This removes your reservation and allows others to book that time slot."
+            "Modify an existing reservation without cancelling it.\n"
+            "• `start` — move the start time\n"
+            "• `end` — extend or shorten the end time\n"
+            "• `range` — change both start and end"
+        ),
+        inline=False
+    )
+    
+    # Welder PSI (only show in welder channels or non-signout channels)
+    if not in_signout_ch or (tool_name and 'welder' in tool_name.lower()):
+        embed.add_field(
+            name="🔥 `/psi value:<number>`",
+            value=(
+                "Record the welding gas PSI reading for your welder reservation. "
+                "Required within 10 minutes of signout start. "
+                "You can also reply to the bot's DM with the number."
+            ),
+            inline=False
+        )
+    
+    embed.add_field(
+        name="💬 `/comment comment:<text>`",
+        value="Post a note visible to everyone in the signout channel.",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔔 Notifications & Waitlist",
+        value=(
+            "`/notifyprefs` — toggle reminders, expiration warnings, and waitlist alerts\n"
+            "`/waitlist action:add` — get notified when this tool becomes available\n"
+            "`/mywaitlist` — view all tools you're waiting for"
         ),
         inline=False
     )
     
     embed.add_field(
-        name="Post Comments",
-        value="`/comment comment:<text>` - Share notes with others",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="Notifications",
+        name="📸 Photo System (Tool Room)",
         value=(
-            "`/notifyprefs` - Configure your notification settings\n"
-            "`/waitlist action:<add|remove>` - Join waitlist for this tool\n"
-            "`/mywaitlist` - View your active waitlist entries"
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="Adjust Reservations",
-        value=(
-            "`/adjusttime` - Modify your existing reservation time\n\n"
-            "**Options:**\n"
-            "• `start` - Change only the start time (keep same end time)\n"
-            "• `end` - Change only the end time (keep same start time)\n"
-            "• `range` - Change both start and end times (new time range)\n\n"
-            "Example: `/adjusttime choice:start new_value:2pm` moves start to 2pm"
+            "**At signout:** You'll receive a DM with photo instructions. Photos should show "
+            "the tool from multiple angles, highlighting any existing damage or blemishes.\n"
+            "**At return:** A return photo is requested via DM (30-min deadline).\n"
+            "**Photo debt:** If you miss a photo, your signout privileges are paused until resolved. "
+            "You can DM photos to the bot to submit them for admin review."
         ),
         inline=False
     )
     
     # Rules
     embed.add_field(
-        name="Rules",
+        name="📜 Rules",
         value=(
-            "• Only slash commands allowed in signout channels\n"
-            "• Reservations cannot overlap existing ones\n"
-            "• Expired reservations are auto-archived\n"
-            "• Respect max time limits per tool\n"
-            "• Tool Room categories (any with 'tool room' in name) require photos"
+            "• Only slash commands are allowed in signout channels\n"
+            "• Reservations cannot overlap — first come, first served\n"
+            "• Expired reservations are automatically archived\n"
+            "• Max reservation time is set per tool by admins\n"
+            "• Re-signout cooldowns may apply to prevent tool monopolization\n"
+            "• Some tools require a Discord role for access"
         ),
         inline=False
     )
     
     if user_is_admin(interaction.user):
         embed.add_field(
-            name="Admin",
-            value="Run `/admin help` for admin commands",
+            name="🛡️ Admin",
+            value="Run `/admin help` for the full admin command reference.",
             inline=False
         )
     

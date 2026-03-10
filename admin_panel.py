@@ -2159,133 +2159,159 @@ class AdminPanel(commands.Cog):
     async def admin_help(self, interaction: discord.Interaction):
         """Display help information for admin commands"""
         embed = discord.Embed(
-            title="Admin Commands Reference",
-            description="Complete list of administrator commands\n\n**All commands organized under `/admin` and `/debug`**",
+            title="🛡️ Admin Commands Reference",
+            description=(
+                "Complete reference for all administrator commands.\n"
+                "All commands are organized under `/admin` and `/debug` groups."
+            ),
             color=discord.Color.gold()
         )
         
         # Tool Management
         embed.add_field(
-            name="Tool Management (`/admin tool`)",
+            name="🔧 Tool Management (`/admin tool`)",
             value=(
-                "`/admin tool add name:<tool> [max_hours] [role_required]` - Add a new tool\n"
-                "`/admin tool remove name:<tool>` - Remove a tool\n"
-                "`/admin tool maxtime hours:<int>` - Set max hours for current tool"
+                "`/admin tool add name:<tool> [max_hours] [role_required]` — Register a new tool\n"
+                "`/admin tool remove name:<tool>` — Remove a tool and its data\n"
+                "`/admin tool maxtime hours:<int>` — Set max reservation hours for current channel's tool"
             ),
             inline=False
         )
         
         # Reservation Management
         embed.add_field(
-            name="Reservation Management (`/admin reservation`)",
+            name="📅 Reservation Management (`/admin reservation`)",
             value=(
-                "`/admin reservation clear` - Clear all for current tool\n"
-                "`/admin reservation forcereturn` - Force return current\n"
-                "`/admin reservation adjust` - Edit another user's reservation\n"
-                "`/admin signout user:<name> tool:<name> time:<range>` - Create reservation for user"
+                "`/admin reservation clear` — Clear all reservations for current tool\n"
+                "`/admin reservation forcereturn` — Force-return an active reservation\n"
+                "`/admin reservation adjust` — Edit another user's reservation time\n"
+                "`/admin signout user:<name> tool:<name> time:<range>` — Create a reservation on behalf of a user"
             ),
             inline=False
         )
         
         # Admin Blocks
         embed.add_field(
-            name="Admin Blocks (`/admin block`)",
+            name="🚫 Admin Blocks (`/admin block`)",
             value=(
-                "`/admin block add tool:<select> time:<range> [force]` - Block tool(s)\n"
+                "Prevent signouts for maintenance, events, etc.\n"
+                "`/admin block add tool:<select> time:<range> [force]` — Block tool(s) for a time window\n"
                 "  • Select `[All Tools]` to block everything\n"
-                "  • Use `force:true` to override existing reservations\n"
-                "`/admin block remove block:<select>` - Remove a block\n"
-                "`/admin block list` - Show all active blocks"
+                "  • `force:true` cancels overlapping reservations\n"
+                "`/admin block remove block:<select>` — Remove a block\n"
+                "`/admin block list` — Show all active blocks"
             ),
             inline=False
         )
         
         # Consecutive Signout Limits
         embed.add_field(
-            name="Re-Signout Limits (`/admin limit`)",
+            name="🔄 Re-Signout Limits (`/admin limit`)",
             value=(
-                "`/admin limit set max:<int> cooldown:<hours>` - Set limits\n"
-                "`/admin limit view` - View all configured limits\n"
-                "`/admin limit check` - See who's in cooldown\n"
-                "`/admin limit clear user:<name>` - Reset cooldown"
+                "Prevent users from monopolizing a tool by limiting consecutive signouts.\n"
+                "`/admin limit set max:<int> cooldown:<hours>` — Set max consecutive signouts & cooldown\n"
+                "`/admin limit view` — View all configured limits\n"
+                "`/admin limit check` — See who's currently in cooldown\n"
+                "`/admin limit clear user:<name>` — Reset a user's cooldown"
             ),
             inline=False
         )
         
         # Exemptions
         embed.add_field(
-            name="Exemptions (`/admin exempt`)",
+            name="⭐ Exemptions (`/admin exempt`)",
             value=(
-                "`/admin exempt add user:<name>` - Exempt from limits\n"
-                "`/admin exempt remove user:<name>` - Remove exemption\n"
-                "`/admin exempt list` - View all exemptions"
+                "Exempt specific users from re-signout limits.\n"
+                "`/admin exempt add user:<name>` — Grant exemption\n"
+                "`/admin exempt remove user:<name>` — Remove exemption\n"
+                "`/admin exempt list` — View all exempted users"
             ),
             inline=False
         )
         
         # Role Management
         embed.add_field(
-            name="Role Management (`/admin role`)",
+            name="🎭 Role Management (`/admin role`)",
             value=(
-                "`/admin role toggle` - Enable/disable role requirement\n"
-                "`/admin role assign user:<name>` - Give tool access\n"
-                "`/admin role revoke user:<name>` - Remove tool access\n"
-                "`/admin role sync` - Sync all tool roles\n"
-                "`/admin role bulk` - Assign current tool's role to all server members"
+                "Control which users can sign out specific tools via Discord roles.\n"
+                "`/admin role toggle` — Enable/disable role requirement for current tool\n"
+                "`/admin role assign user:<name>` — Give a user access to this tool\n"
+                "`/admin role revoke user:<name>` — Remove a user's access\n"
+                "`/admin role sync` — Sync all tool roles with Discord\n"
+                "`/admin role bulk` — Assign current tool's role to all server members"
             ),
             inline=False
         )
         
-        # Photo Debt Management
+        # Photo System
         embed.add_field(
-            name="Photo Debt Management (`/admin debt`)",
+            name="📸 Photo System (`/admin debt` / `/admin photo`)",
             value=(
-                "`/admin debt clear user:<name>` - Clear user's photo debts\n"
-                "`/admin debt audit` - View all outstanding photo debts\n"
-                "`/admin debt list [tool]` - View debts for specific tool"
+                "Tool Room channels require photos at signout and return. Missing a photo "
+                "creates a debt that blocks the user from new signouts.\n\n"
+                "**Debt Management:**\n"
+                "`/admin debt clear user:<name>` — Clear a user's photo debts & unblock them\n"
+                "`/admin debt audit` — View all outstanding photo debts\n"
+                "`/admin debt list [tool]` — View debts for a specific tool\n\n"
+                "**Photo Review** (users can DM photos to settle debts):\n"
+                "`/admin photo pending [limit]` — View photos awaiting admin review\n"
+                "`/admin photo approve photo:<select>` — Approve a pending photo (dropdown)\n"
+                "`/admin photo reject photo:<select>` — Reject a pending photo (dropdown)\n"
+                "`/admin photo bulkapprove reservation:<select>` — Approve all pending photos for a reservation\n"
+                "`/admin photo view tool:<select> username:<select> timerange:<text>` — View photos sent to DMs"
             ),
             inline=False
         )
         
-        # Photo Review
+        # Welder PSI
         embed.add_field(
-            name="Photo Review (`/admin photo`)",
+            name="🔥 Welder Gas PSI",
             value=(
-                "`/admin photo pending [limit]` - View photos awaiting review\n"
-                "`/admin photo approve reservation_id:<id>` - Approve photos for a reservation"
+                "Welder tools automatically prompt users for a gas PSI reading at signout (via DM). "
+                "Users enter the reading with `/psi` or by replying to the DM. "
+                "If PSI is not recorded by expiration, one final reminder is sent.\n\n"
+                "PSI values are stored on the reservation and archived in history. "
+                "No admin action is needed — this is fully automated."
             ),
             inline=False
         )
         
         # Notifications
         embed.add_field(
-            name="Notifications",
+            name="🔔 Notifications",
             value=(
-                "`/admin summary` - Send daily summary to all admins\n"
-                "`/testnotify` - Test notification system (dev)"
+                "`/admin summary` — Send daily usage summary to all admins\n"
+                "`/testnotify` — Test notification system (developer only)\n\n"
+                "The bot automatically sends:\n"
+                "• 15-min pre-reservation reminders\n"
+                "• 15-min expiration warnings\n"
+                "• Waitlist availability alerts\n"
+                "• Photo instructions DM on Tool Room signout\n"
+                "• Return photo requests when reservations expire\n"
+                "• Welder PSI prompts at signout and expiration"
             ),
             inline=False
         )
         
         # Logging & Debugging
         embed.add_field(
-            name="Logging & Debug (`/debug logs`)",
+            name="🪵 Logging & Debug (`/debug logs`)",
             value=(
-                "`/debug logs level level:<DEBUG|INFO|WARNING|ERROR>` - Set log level\n"
-                "`/debug logs tail [lines]` - View recent log entries\n"
-                "`/debug logs watch enable:<true|false>` - Stream logs to channel"
+                "`/debug logs level level:<DEBUG|INFO|WARNING|ERROR>` — Set runtime log level\n"
+                "`/debug logs tail [lines]` — View recent log entries\n"
+                "`/debug logs watch enable:<true|false>` — Stream logs to a channel in real time"
             ),
             inline=False
         )
         
         # Tips
         embed.add_field(
-            name="Admin Tips",
+            name="💡 Tips",
             value=(
-                "• Type `/admin` to see all admin command groups\n"
-                "• **Tool Room channels** (any category with 'tool room' in name) enforce photo requirements\n"
-                "• **Role requirements** enabled by default for new tools\n"
-                "• **Re-signout limits** prevent monopolizing tools\n"
+                "• Type `/admin` to browse all command groups interactively\n"
+                "• **Tool Room** = any Discord category with 'tool room' in its name\n"
+                "• **Role requirements** are enabled by default for new tools\n"
+                "• **Re-signout limits** prevent one person from hogging a tool\n"
                 "• Admins bypass role checks and limit restrictions\n"
                 "• All admin actions are logged for auditing"
             ),
@@ -2332,6 +2358,107 @@ class AdminPanel(commands.Cog):
                     f"An error occurred: {str(error)}",
                     ephemeral=True
                 )
+    
+    # ========== Photo Autocomplete Helpers ==========
+    
+    async def pending_photo_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete showing only photos pending review — formatted for approve/reject"""
+        try:
+            with get_db_session() as session:
+                from repositories import ReservationPhotoRepository
+                photo_repo = ReservationPhotoRepository(session)
+                pending = photo_repo.get_pending_review_photos(limit=50)
+                
+                choices = []
+                for photo in pending:
+                    label = f"{photo.username} — {photo.tool_name} ({photo.photo_type.value}) #{photo.id}"
+                    if current and current.lower() not in label.lower():
+                        continue
+                    choices.append(app_commands.Choice(name=label[:100], value=str(photo.id)))
+                
+                return choices[:25]
+        except Exception as e:
+            logger.error(f"Error in pending_photo_autocomplete: {e}")
+            return []
+    
+    async def pending_reservation_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete showing reservations that have pending photos — for bulk approve"""
+        try:
+            with get_db_session() as session:
+                from repositories import ReservationPhotoRepository
+                from database import ReservationPhotoModel, ReservationModel
+                from collections import Counter
+                
+                photo_repo = ReservationPhotoRepository(session)
+                pending = photo_repo.get_pending_review_photos(limit=100)
+                
+                # Group by reservation_id and count
+                res_photos = {}  # res_id -> {username, tool_name, count}
+                for photo in pending:
+                    rid = photo.reservation_id
+                    if rid not in res_photos:
+                        res_photos[rid] = {
+                            'username': photo.username,
+                            'tool_name': photo.tool_name,
+                            'count': 0
+                        }
+                    res_photos[rid]['count'] += 1
+                
+                choices = []
+                for rid, info in res_photos.items():
+                    label = f"{info['username']} — {info['tool_name']} ({info['count']} pending) R#{rid}"
+                    if current and current.lower() not in label.lower():
+                        continue
+                    choices.append(app_commands.Choice(name=label[:100], value=str(rid)))
+                
+                return choices[:25]
+        except Exception as e:
+            logger.error(f"Error in pending_reservation_autocomplete: {e}")
+            return []
+    
+    async def photo_tool_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete showing only tools that have photos"""
+        try:
+            with get_db_session() as session:
+                from database import ReservationPhotoModel
+                from sqlalchemy import distinct
+                
+                tool_names = session.query(distinct(ReservationPhotoModel.tool_name)).order_by(
+                    ReservationPhotoModel.tool_name
+                ).all()
+                
+                choices = []
+                for (name,) in tool_names:
+                    if current and current.lower() not in name.lower():
+                        continue
+                    choices.append(app_commands.Choice(name=name, value=name))
+                
+                return choices[:25]
+        except Exception as e:
+            logger.error(f"Error in photo_tool_autocomplete: {e}")
+            return []
+    
+    async def photo_user_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Autocomplete showing only users that have photos"""
+        try:
+            with get_db_session() as session:
+                from database import ReservationPhotoModel
+                from sqlalchemy import distinct
+                
+                usernames = session.query(distinct(ReservationPhotoModel.username)).order_by(
+                    ReservationPhotoModel.username
+                ).all()
+                
+                choices = []
+                for (name,) in usernames:
+                    if current and current.lower() not in name.lower():
+                        continue
+                    choices.append(app_commands.Choice(name=name, value=name))
+                
+                return choices[:25]
+        except Exception as e:
+            logger.error(f"Error in photo_user_autocomplete: {e}")
+            return []
     
     # ========== Photo Debt Management Commands ==========
     
@@ -2547,29 +2674,36 @@ class AdminPanel(commands.Cog):
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
     
-    @photo_group.command(name="approve", description="Admin: Approve a photo by ID")
+    @photo_group.command(name="approve", description="Admin: Approve a pending photo")
     @is_admin_check()
     @app_commands.describe(
-        photo_id="Photo ID to approve (from /admin photo view results)",
+        photo="Select a pending photo to approve",
         notes="Optional notes about the approval"
     )
-    async def photo_approve(self, interaction: discord.Interaction, photo_id: int, notes: str = None):
+    @app_commands.autocomplete(photo=pending_photo_autocomplete)
+    async def photo_approve(self, interaction: discord.Interaction, photo: str, notes: str = None):
         """Approve a photo"""
+        try:
+            photo_id = int(photo)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid photo selection.", ephemeral=True)
+            return
+        
         with get_db_session() as session:
             from repositories import ReservationPhotoRepository
             photo_repo = ReservationPhotoRepository(session)
             
-            photo = photo_repo.get_photo_by_id(photo_id)
-            if not photo:
+            photo_obj = photo_repo.get_photo_by_id(photo_id)
+            if not photo_obj:
                 await interaction.response.send_message(
                     f"❌ Photo ID {photo_id} not found",
                     ephemeral=True
                 )
                 return
             
-            if photo.approved is True:
+            if photo_obj.approved is True:
                 await interaction.response.send_message(
-                    f"ℹ️ Photo ID {photo_id} is already approved by {photo.reviewed_by_username}",
+                    f"ℹ️ Photo ID {photo_id} is already approved by {photo_obj.reviewed_by_username}",
                     ephemeral=True
                 )
                 return
@@ -2585,7 +2719,7 @@ class AdminPanel(commands.Cog):
             if success:
                 session.commit()
                 await interaction.response.send_message(
-                    f"✅ Approved {photo.photo_type.value} photo for **{photo.username}** - **{photo.tool_name}**\\n"
+                    f"✅ Approved {photo_obj.photo_type.value} photo for **{photo_obj.username}** - **{photo_obj.tool_name}**\n"
                     f"Photo ID: {photo_id}",
                     ephemeral=True
                 )
@@ -2596,29 +2730,36 @@ class AdminPanel(commands.Cog):
                     ephemeral=True
                 )
     
-    @photo_group.command(name="reject", description="Admin: Reject a photo by ID")
+    @photo_group.command(name="reject", description="Admin: Reject a pending photo")
     @is_admin_check()
     @app_commands.describe(
-        photo_id="Photo ID to reject (from /admin photo view results)",
+        photo="Select a pending photo to reject",
         notes="Reason for rejection (shown to user)"
     )
-    async def photo_reject(self, interaction: discord.Interaction, photo_id: int, notes: str = None):
+    @app_commands.autocomplete(photo=pending_photo_autocomplete)
+    async def photo_reject(self, interaction: discord.Interaction, photo: str, notes: str = None):
         """Reject a photo"""
+        try:
+            photo_id = int(photo)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid photo selection.", ephemeral=True)
+            return
+        
         with get_db_session() as session:
             from repositories import ReservationPhotoRepository
             photo_repo = ReservationPhotoRepository(session)
             
-            photo = photo_repo.get_photo_by_id(photo_id)
-            if not photo:
+            photo_obj = photo_repo.get_photo_by_id(photo_id)
+            if not photo_obj:
                 await interaction.response.send_message(
                     f"❌ Photo ID {photo_id} not found",
                     ephemeral=True
                 )
                 return
             
-            if photo.approved is False:
+            if photo_obj.approved is False:
                 await interaction.response.send_message(
-                    f"ℹ️ Photo ID {photo_id} is already rejected by {photo.reviewed_by_username}",
+                    f"ℹ️ Photo ID {photo_id} is already rejected by {photo_obj.reviewed_by_username}",
                     ephemeral=True
                 )
                 return
@@ -2634,8 +2775,8 @@ class AdminPanel(commands.Cog):
             if success:
                 session.commit()
                 await interaction.response.send_message(
-                    f"❌ Rejected {photo.photo_type.value} photo for **{photo.username}** - **{photo.tool_name}**\\n"
-                    f"Photo ID: {photo_id}\\n"
+                    f"❌ Rejected {photo_obj.photo_type.value} photo for **{photo_obj.username}** - **{photo_obj.tool_name}**\n"
+                    f"Photo ID: {photo_id}\n"
                     f"Reason: {notes or 'No reason provided'}",
                     ephemeral=True
                 )
@@ -2649,10 +2790,11 @@ class AdminPanel(commands.Cog):
     @photo_group.command(name="view", description="Admin: View photos for a user/tool/time range")
     @is_admin_check()
     @app_commands.describe(
-        tool="Tool name",
-        username="Username to search for",
+        tool="Select a tool",
+        username="Select a user",
         timerange="Time range (e.g., 'today', 'last 3 days', 'dec 10 to dec 15')"
     )
+    @app_commands.autocomplete(tool=photo_tool_autocomplete, username=photo_user_autocomplete)
     async def photo_view(self, interaction: discord.Interaction, tool: str, username: str, timerange: str):
         """View photos matching the criteria and send via DM"""
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -2766,17 +2908,24 @@ class AdminPanel(commands.Cog):
     
     @photo_group.command(name="bulkapprove", description="Admin: Approve all pending photos for a reservation")
     @is_admin_check()
-    @app_commands.describe(reservation_id="Reservation ID")
-    async def photo_bulk_approve(self, interaction: discord.Interaction, reservation_id: int):
+    @app_commands.describe(reservation="Select a reservation with pending photos")
+    @app_commands.autocomplete(reservation=pending_reservation_autocomplete)
+    async def photo_bulk_approve(self, interaction: discord.Interaction, reservation: str):
         """Bulk approve all pending photos for a reservation"""
+        try:
+            reservation_id = int(reservation)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid reservation selection.", ephemeral=True)
+            return
+        
         with get_db_session() as session:
             from repositories import ReservationPhotoRepository
             from database import ReservationModel
             photo_repo = ReservationPhotoRepository(session)
             
             # Verify reservation exists
-            reservation = session.query(ReservationModel).filter_by(id=reservation_id).first()
-            if not reservation:
+            res_obj = session.query(ReservationModel).filter_by(id=reservation_id).first()
+            if not res_obj:
                 await interaction.response.send_message(
                     f"❌ Reservation ID {reservation_id} not found",
                     ephemeral=True
@@ -2792,9 +2941,9 @@ class AdminPanel(commands.Cog):
             if count > 0:
                 session.commit()
                 await interaction.response.send_message(
-                    f"✅ Approved {count} photo(s) for reservation ID {reservation_id}\\n"
-                    f"**User:** {reservation.username}\\n"
-                    f"**Tool:** {reservation.tool_name}",
+                    f"✅ Approved {count} photo(s) for reservation ID {reservation_id}\n"
+                    f"**User:** {res_obj.username}\n"
+                    f"**Tool:** {res_obj.tool_name}",
                     ephemeral=True
                 )
                 logger.info(f"Admin {interaction.user.name} bulk approved {count} photos for reservation {reservation_id}")
