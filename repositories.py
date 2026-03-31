@@ -853,6 +853,13 @@ class ConsecutiveSignoutRepository:
         # Check consecutive count
         tracker = self.get_tracker(user_id, tool_id)
         if tracker and tracker.consecutive_count >= limit.max_consecutive_signouts:
+            if not tracker.cooldown_expires_at:
+                # Stale state: count hit limit but cooldown was already cleared
+                # (caused by old bug). Reset and allow sign-out.
+                tracker.consecutive_count = 0
+                tracker.accumulated_hours = 0.0
+                tracker.updated_at = datetime.utcnow()
+                return True, None
             # They've hit the limit, apply cooldown
             expires_at = self.set_cooldown(user_id, tool_id, limit.cooldown_hours)
             

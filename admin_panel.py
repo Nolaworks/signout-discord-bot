@@ -878,9 +878,15 @@ class AdminPanel(commands.Cog):
                     tracker.updated_at = now
                 # Check if approaching limit
                 elif tracker.consecutive_count > 0:
-                    approaching_limit.append(
-                        f"• **{tracker.username}**: {tracker.consecutive_count}/{limit.max_consecutive_signouts} consecutive"
-                    )
+                    if tracker.consecutive_count >= limit.max_consecutive_signouts:
+                        # Stale: hit/exceeded limit with no active cooldown — reset
+                        tracker.consecutive_count = 0
+                        tracker.accumulated_hours = 0.0
+                        tracker.updated_at = now
+                    else:
+                        approaching_limit.append(
+                            f"• **{tracker.username}**: {tracker.consecutive_count}/{limit.max_consecutive_signouts} consecutive"
+                        )
             
             if active_cooldowns:
                 embed.add_field(
@@ -2025,7 +2031,7 @@ class AdminPanel(commands.Cog):
     
     @limit_group.command(name="clear", description="Clear cooldown for a user on current tool")
     @app_commands.describe(username="Username to clear cooldown for")
-    @app_commands.autocomplete(username=user_autocomplete)
+    @app_commands.autocomplete(username=admin_user_autocomplete)
     @is_admin_check()
     async def limit_clear(self, interaction: discord.Interaction, username: str):
         """Clear cooldown - nested grouped version"""
@@ -2037,7 +2043,7 @@ class AdminPanel(commands.Cog):
         cooldown_hours="Hours the cooldown should last",
         reason="Reason for forcing cooldown (optional)"
     )
-    @app_commands.autocomplete(username=user_autocomplete)
+    @app_commands.autocomplete(username=admin_user_autocomplete)
     @is_admin_check()
     async def limit_force(self, interaction: discord.Interaction, username: str,
                           cooldown_hours: int, reason: str = None):
@@ -2185,58 +2191,139 @@ class AdminPanel(commands.Cog):
         """Create reservation on behalf of user"""
         await self.create_reservation_for_user(interaction, user, tool, time, photo)
     
-    @admin_group.command(name="summary", description="Manually send the daily notification summary to admins")
+    @admin_group.command(name="summary", description="View admin summary for this server")
     @is_admin_check()
     async def admin_summary(self, interaction: discord.Interaction):
-        """Manually trigger the daily admin notification summary"""
+        """Show admin summary directly to the requesting user (ephemeral)"""
         await interaction.response.defer(ephemeral=True)
         
         with get_db_session() as session:
-            # Get all admin users
-            from database import UserModel
-            admin_users = session.query(UserModel).filter_by(is_admin=True).all()
+            from database import UserModel, ReservationModel, ConsecutiveSignoutTracker
+            from datetime import timedelta
+            from sqlalchemy import func
             
-            # Filter out invalid user IDs (like 'admin' or 'migrated_*')
-            admin_ids = []
-            for user in admin_users:
-                try:
-                    # Try to convert to int to validate it's a real Discord user ID
-                    int(user.user_id)
-                    admin_ids.append(user.user_id)
-                except ValueError:
-                    # Skip invalid user IDs (migrated data, system users, etc.)
-                    logger.warning(f"Skipping invalid admin user_id: {user.user_id}")
+            now = datetime.utcnow()
+            yesterday = now - timedelta(days=1)
             
-            if not admin_ids:
-                await interaction.followup.send(
-                    "No admin users found in the database.",
-                    ephemeral=True
-                )
-                return
+            # --- Usage stats ---
+            total_reservations = session.query(ReservationModel).filter(
+                ReservationModel.created_at >= yesterday
+            ).count()
             
-            # Get tool role information
+            active_reservations = session.query(ReservationModel).filter(
+                ReservationModel.status == ReservationStatusEnum.ACTIVE
+            ).count()
+            
+            overdue_reservations = session.query(ReservationModel).filter(
+                ReservationModel.status == ReservationStatusEnum.ACTIVE,
+                ReservationModel.end_time < now
+            ).count()
+            
+            popular_tools = session.query(
+                ReservationModel.tool_name,
+                func.count(ReservationModel.id).label('count')
+            ).filter(
+                ReservationModel.created_at >= yesterday
+            ).group_by(
+                ReservationModel.tool_name
+            ).order_by(
+                func.count(ReservationModel.id).desc()
+            ).limit(5).all()
+            
+            # --- Build main summary embed ---
+            embeds = []
+            
+            summary_embed = discord.Embed(
+                title="📊 Admin Summary",
+                description=f"Summary as of {now.strftime('%B %d, %Y')}",
+                color=discord.Color.blue()
+            )
+            summary_embed.add_field(name="New Reservations (24h)", value=str(total_reservations), inline=True)
+            summary_embed.add_field(name="Currently Active", value=str(active_reservations), inline=True)
+            summary_embed.add_field(name="Overdue", value=str(overdue_reservations), inline=True)
+            
+            if popular_tools:
+                tools_list = "\n".join([f"{i+1}. {tool[0]} ({tool[1]} reservations)"
+                                       for i, tool in enumerate(popular_tools)])
+                summary_embed.add_field(name="Most Popular Tools", value=tools_list, inline=False)
+            
+            embeds.append(summary_embed)
+            
+            # --- Cooldown / consecutive tracking embed ---
+            consecutive_repo = ConsecutiveSignoutRepository(session)
             tool_repo = ToolRepository(session)
             tools = tool_repo.get_all()
             
-            # Build role summary
-            tools_with_roles = []
-            
-            # Get all guild members (excluding bots)
-            guild = interaction.guild
-            all_members = [m for m in guild.members if not m.bot]
-            
-            logger.info(f"Found {len(all_members)} non-bot members in guild cache")
+            active_cooldowns = []
+            tracked_users = []
             
             for tool in tools:
-                # Check if tool has a role (regardless of whether it's required)
+                limit = consecutive_repo.get_limit(tool.id)
+                if not limit or limit.max_consecutive_signouts == 0:
+                    continue
+                
+                trackers = session.query(ConsecutiveSignoutTracker).filter_by(tool_id=tool.id).all()
+                
+                for tracker in trackers:
+                    if tracker.cooldown_expires_at and tracker.cooldown_expires_at > now:
+                        hours_left = (tracker.cooldown_expires_at - now).total_seconds() / 3600
+                        active_cooldowns.append(
+                            f"• **{tracker.username}** on **{tool.name}**: {hours_left:.1f}h remaining"
+                        )
+                    elif tracker.cooldown_expires_at and tracker.cooldown_expires_at <= now:
+                        # Expired cooldown — clean up stale data
+                        tracker.cooldown_expires_at = None
+                        tracker.consecutive_count = 0
+                        tracker.accumulated_hours = 0.0
+                        tracker.updated_at = now
+                    elif tracker.consecutive_count > 0:
+                        if tracker.consecutive_count >= limit.max_consecutive_signouts:
+                            # Stale: hit limit with no cooldown — reset
+                            tracker.consecutive_count = 0
+                            tracker.accumulated_hours = 0.0
+                            tracker.updated_at = now
+                        else:
+                            tracked_users.append(
+                                f"• **{tracker.username}** on **{tool.name}**: "
+                                f"{tracker.consecutive_count}/{limit.max_consecutive_signouts} consecutive"
+                            )
+            
+            if active_cooldowns or tracked_users:
+                cooldown_embed = discord.Embed(
+                    title="🔄 Re-Signout Tracking",
+                    color=discord.Color.orange()
+                )
+                
+                if active_cooldowns:
+                    cooldown_text = "\n".join(active_cooldowns[:15])
+                    cooldown_embed.add_field(
+                        name="In Cooldown",
+                        value=cooldown_text,
+                        inline=False
+                    )
+                
+                if tracked_users:
+                    tracked_text = "\n".join(tracked_users[:15])
+                    cooldown_embed.add_field(
+                        name="Consecutive Signouts",
+                        value=tracked_text,
+                        inline=False
+                    )
+                
+                embeds.append(cooldown_embed)
+            
+            # --- Role summary embed ---
+            guild = interaction.guild
+            all_members = [m for m in guild.members if not m.bot]
+            tools_with_roles = []
+            
+            for tool in tools:
                 if tool.role_id:
                     role = guild.get_role(int(tool.role_id))
                     if role:
-                        # Get member objects with this role (excluding bots)
                         members_with_role = [m for m in role.members if not m.bot]
                         members_with_role_names = [m.name for m in members_with_role]
                         
-                        # If we have member cache, calculate who doesn't have the role
                         if all_members:
                             all_member_names = [m.name for m in all_members]
                             members_without_role_names = [name for name in all_member_names if name not in members_with_role_names]
@@ -2251,67 +2338,45 @@ class AdminPanel(commands.Cog):
                             'without_role': members_without_role_names
                         })
             
-            # Send summary to all admins via notification manager
-            notification_manager = getattr(self.bot, 'notification_manager', None)
-            if notification_manager:
-                await notification_manager.send_daily_summary(session, admin_ids)
-            else:
-                logger.warning("Notification manager not available")
-            
-            # Also send role summary
-            for admin_id in admin_ids:
-                if tools_with_roles:
-                    embed = discord.Embed(
-                        title="Tool Role Access Summary",
-                        description="Overview of all tools with roles and user access",
-                        color=discord.Color.blue()
+            if tools_with_roles:
+                role_embed = discord.Embed(
+                    title="🎭 Tool Role Access Summary",
+                    description="Overview of all tools with roles and user access",
+                    color=discord.Color.blue()
+                )
+                
+                for tool_info in tools_with_roles:
+                    with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
+                    without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
+                    
+                    requirement_status = "[REQUIRED]" if tool_info['role_required'] else "[Optional]"
+                    
+                    field_value = (
+                        f"**Status:** {requirement_status}\n"
+                        f"**Has Access ({len(tool_info['with_role'])}):** {with_role_text}\n\n"
+                        f"**Needs Access ({len(tool_info['without_role'])}):** {without_role_text}"
                     )
                     
-                    for tool_info in tools_with_roles:
-                        with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
-                        without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
-                        
-                        requirement_status = "[REQUIRED]" if tool_info['role_required'] else "[Optional]"
-                        
+                    if len(field_value) > 1024:
                         field_value = (
                             f"**Status:** {requirement_status}\n"
-                            f"**Has Access ({len(tool_info['with_role'])}):** {with_role_text}\n\n"
-                            f"**Needs Access ({len(tool_info['without_role'])}):** {without_role_text}"
-                        )
-                        
-                        # Discord field value limit is 1024 characters
-                        if len(field_value) > 1024:
-                            field_value = (
-                                f"**Status:** {requirement_status}\n"
-                                f"**Has Access:** {len(tool_info['with_role'])} users\n"
-                                f"**Needs Access:** {len(tool_info['without_role'])} users\n"
-                                f"(Too many to list - use Discord role view)"
-                            )
-                        
-                        embed.add_field(
-                            name=f"{tool_info['tool']}",
-                            value=field_value,
-                            inline=False
+                            f"**Has Access:** {len(tool_info['with_role'])} users\n"
+                            f"**Needs Access:** {len(tool_info['without_role'])} users\n"
+                            f"(Too many to list - use Discord role view)"
                         )
                     
-                    embed.set_footer(text="Use /assignrole to grant access | Use /togglerole to change requirement status")
-                else:
-                    embed = discord.Embed(
-                        title="Tool Role Access Summary",
-                        description="No tools have roles configured yet.",
-                        color=discord.Color.blue()
+                    role_embed.add_field(
+                        name=f"{tool_info['tool']}",
+                        value=field_value,
+                        inline=False
                     )
-                    embed.set_footer(text="Use /syncroles to create roles for all tools")
                 
-                await send_dm(self.bot, admin_id, embed=embed, log_context="role summary")
+                role_embed.set_footer(text="Use /admin role assign to grant access | /admin role toggle to change requirements")
+                embeds.append(role_embed)
             
             session.commit()
         
-        summary_text = f"Daily notification summary has been sent to {len(admin_ids)} admin(s)!"
-        if tools_with_roles:
-            summary_text += f"\n\nRole access summary included for {len(tools_with_roles)} tool(s) with roles."
-        
-        await interaction.followup.send(summary_text, ephemeral=True)
+        await interaction.followup.send(embeds=embeds, ephemeral=True)
     
     @admin_group.command(name="help", description="Admin command reference")
     @is_admin_check()
@@ -2370,8 +2435,9 @@ class AdminPanel(commands.Cog):
                 "Prevent users from monopolizing a tool by limiting consecutive signouts.\n"
                 "`/admin limit set max:<int> cooldown:<hours>` — Set max consecutive signouts & cooldown\n"
                 "`/admin limit view` — View all configured limits\n"
-                "`/admin limit check` — See who's currently in cooldown\n"
-                "`/admin limit clear user:<name>` — Reset a user's cooldown"
+                "`/admin limit check` — See who's currently in cooldown for this channel's tool\n"
+                "`/admin limit clear user:<name>` — Reset a user's cooldown\n"
+                "`/admin limit force user:<name> cooldown_hours:<int>` — Force a cooldown on a user"
             ),
             inline=False
         )
@@ -2439,7 +2505,7 @@ class AdminPanel(commands.Cog):
         embed.add_field(
             name="🔔 Notifications",
             value=(
-                "`/admin summary` — Send daily usage summary to all admins\n"
+                "`/admin summary` — View admin summary (usage stats, cooldowns, roles)\n"
                 "`/testnotify` — Test notification system (developer only)\n\n"
                 "The bot automatically sends:\n"
                 "• 15-min pre-reservation reminders\n"
