@@ -702,6 +702,13 @@ class AdminPanel(commands.Cog):
             )
             return
         
+        if cooldown_hours > 720:
+            await interaction.response.send_message(
+                "Cooldown cannot exceed 720 hours (30 days).",
+                ephemeral=True
+            )
+            return
+        
         if reset_after_hours < 1:
             await interaction.response.send_message(
                 "Reset period must be at least 1 hour.",
@@ -731,6 +738,18 @@ class AdminPanel(commands.Cog):
             # Set the limit
             limit = consecutive_repo.set_limit(tool.id, tool_name, max_consecutive, cooldown_hours,
                                               reset_after_hours, min_total_hours)
+            
+            # Audit log
+            from repositories import AdminActionLogRepository
+            audit_repo = AdminActionLogRepository(session)
+            audit_repo.log_action(
+                admin_user_id=get_user_id(interaction.user),
+                admin_username=interaction.user.name,
+                action_type="set_resignout_limit",
+                tool_name=tool_name,
+                details=f"max={max_consecutive}, cooldown={cooldown_hours}h, reset_after={reset_after_hours}h, min_total={min_total_hours}h"
+            )
+            
             session.commit()
             
             if max_consecutive == 0:
@@ -905,6 +924,19 @@ class AdminPanel(commands.Cog):
             
             # Reset their consecutive count and cooldown
             consecutive_repo.reset_consecutive(user.user_id, tool.id)
+            
+            # Audit log
+            from repositories import AdminActionLogRepository
+            audit_repo = AdminActionLogRepository(session)
+            audit_repo.log_action(
+                admin_user_id=get_user_id(interaction.user),
+                admin_username=interaction.user.name,
+                action_type="clear_cooldown",
+                target_user_id=user.user_id,
+                target_username=username,
+                tool_name=tool_name
+            )
+            
             session.commit()
             
             await interaction.response.send_message(
@@ -925,6 +957,13 @@ class AdminPanel(commands.Cog):
         if cooldown_hours < 1:
             await interaction.response.send_message(
                 "Cooldown must be at least 1 hour.",
+                ephemeral=True
+            )
+            return
+        
+        if cooldown_hours > 720:
+            await interaction.response.send_message(
+                "Cooldown cannot exceed 720 hours (30 days).",
                 ephemeral=True
             )
             return
@@ -953,6 +992,23 @@ class AdminPanel(commands.Cog):
             expires_at = consecutive_repo.force_cooldown(
                 user.user_id, username, tool.id, tool_name, cooldown_hours
             )
+            
+            # Audit log
+            from repositories import AdminActionLogRepository
+            audit_repo = AdminActionLogRepository(session)
+            reason_detail = f"cooldown_hours={cooldown_hours}"
+            if reason:
+                reason_detail += f", reason={reason}"
+            audit_repo.log_action(
+                admin_user_id=get_user_id(interaction.user),
+                admin_username=interaction.user.name,
+                action_type="force_cooldown",
+                target_user_id=user.user_id,
+                target_username=username,
+                tool_name=tool_name,
+                details=reason_detail
+            )
+            
             session.commit()
             
             from time_utils import CENTRAL_TZ
@@ -1013,6 +1069,22 @@ class AdminPanel(commands.Cog):
             # Also clear any existing cooldown
             consecutive_repo.reset_consecutive(user.user_id, tool.id)
             
+            # Audit log
+            from repositories import AdminActionLogRepository
+            audit_repo = AdminActionLogRepository(session)
+            duration_detail = f"duration_hours={duration_hours}" if duration_hours else "permanent"
+            if reason:
+                duration_detail += f", reason={reason}"
+            audit_repo.log_action(
+                admin_user_id=admin_id,
+                admin_username=interaction.user.name,
+                action_type="grant_exemption",
+                target_user_id=user.user_id,
+                target_username=username,
+                tool_name=tool_name,
+                details=duration_detail
+            )
+            
             session.commit()
             
             duration_text = f"for {duration_hours} hours" if duration_hours else "permanently"
@@ -1055,6 +1127,20 @@ class AdminPanel(commands.Cog):
             
             # Remove exemption
             removed = consecutive_repo.remove_exemption(user.user_id, tool.id)
+            
+            if removed:
+                # Audit log
+                from repositories import AdminActionLogRepository
+                audit_repo = AdminActionLogRepository(session)
+                audit_repo.log_action(
+                    admin_user_id=get_user_id(interaction.user),
+                    admin_username=interaction.user.name,
+                    action_type="remove_exemption",
+                    target_user_id=user.user_id,
+                    target_username=username,
+                    tool_name=tool_name
+                )
+            
             session.commit()
             
             if removed:

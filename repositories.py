@@ -12,7 +12,8 @@ from database import (
     UserModel, ToolModel, ReservationModel, ReservationHistoryModel,
     ToolStatisticsModel, UserStatisticsModel, UserToolStatisticsModel,
     ReservationStatusEnum, ToolSignoutLimitModel, ConsecutiveSignoutTracker,
-    ConsecutiveSignoutExemption, ReservationPhotoModel, PhotoTypeEnum
+    ConsecutiveSignoutExemption, ReservationPhotoModel, PhotoTypeEnum,
+    AdminActionLogModel
 )
 from models import User, Tool, Reservation, ReservationHistory, ReservationPhoto, PhotoType
 from time_utils import calculate_duration_hours
@@ -668,17 +669,27 @@ class ConsecutiveSignoutRepository:
             tracker.updated_at = datetime.utcnow()
     
     def set_cooldown(self, user_id: str, tool_id: int, cooldown_hours: int) -> datetime:
-        """Set cooldown period for a user"""
+        """Set cooldown period for a user. Creates a tracker if none exists."""
         from datetime import timedelta
         tracker = self.get_tracker(user_id, tool_id)
         
-        if tracker:
-            cooldown_expires = datetime.utcnow() + timedelta(hours=cooldown_hours)
-            tracker.cooldown_expires_at = cooldown_expires
-            tracker.updated_at = datetime.utcnow()
-            return cooldown_expires
+        if not tracker:
+            # Shouldn't normally happen, but create tracker to avoid silent failure
+            tracker = ConsecutiveSignoutTracker(
+                user_id=user_id,
+                username=user_id,  # Best effort; caller context has the real username
+                tool_id=tool_id,
+                tool_name=str(tool_id),
+                consecutive_count=0,
+                accumulated_hours=0.0,
+                last_signout_ended_at=datetime.utcnow()
+            )
+            self.session.add(tracker)
         
-        return None
+        cooldown_expires = datetime.utcnow() + timedelta(hours=cooldown_hours)
+        tracker.cooldown_expires_at = cooldown_expires
+        tracker.updated_at = datetime.utcnow()
+        return cooldown_expires
     
     def force_cooldown(self, user_id: str, username: str, tool_id: int, tool_name: str,
                        cooldown_hours: int) -> datetime:
@@ -857,11 +868,40 @@ class ConsecutiveSignoutRepository:
         
         return True, None
     
+    def reset_others_on_signout(self, signing_out_user_id: str, tool_id: int):
+        """Reset all other users' consecutive counters when a new user signs out a tool.
+        
+        This is the 'fairness' behavior: when user B signs out a tool,
+        all other users' consecutive counters for that tool reset to 0.
+        """
+        trackers = self.session.query(ConsecutiveSignoutTracker).filter(
+            ConsecutiveSignoutTracker.tool_id == tool_id,
+            ConsecutiveSignoutTracker.user_id != signing_out_user_id,
+            ConsecutiveSignoutTracker.consecutive_count > 0
+        ).all()
+        
+        for tracker in trackers:
+            logger.info(f"Resetting consecutive counter for {tracker.username} on {tracker.tool_name} "
+                       f"(was {tracker.consecutive_count}) because another user signed it out")
+            tracker.consecutive_count = 0
+            tracker.accumulated_hours = 0.0
+            tracker.cooldown_expires_at = None
+            tracker.updated_at = datetime.utcnow()
+
     def handle_signout_ended(self, user_id: str, username: str, tool_id: int, tool_name: str, 
                             reservation_end_time: datetime):
-        """Called when a reservation ends (returned or expired)"""
+        """Called when a reservation ends (returned or expired).
+        
+        Updates the user's last_signout_ended_at timestamp. Also checks
+        if another user has already signed out the tool, in which case
+        this user's consecutive counter is reset.
+        """
+        tracker = self.get_tracker(user_id, tool_id)
+        if tracker:
+            tracker.last_signout_ended_at = reservation_end_time
+            tracker.updated_at = datetime.utcnow()
+        
         # Check if someone else has signed out this tool since their reservation
-        # If so, reset their consecutive count
         latest_res = self.session.query(ReservationModel).filter(
             ReservationModel.tool_id == tool_id,
             ReservationModel.user_id != user_id,
@@ -1130,4 +1170,36 @@ class ReservationPhotoRepository:
             reviewed_at=db_photo.reviewed_at,
             approved=db_photo.approved,
             review_notes=db_photo.review_notes
+        )
+
+
+class AdminActionLogRepository:
+    """Repository for logging admin actions (audit trail)"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def log_action(self, admin_user_id: str, admin_username: str, action_type: str,
+                   target_user_id: Optional[str] = None, target_username: Optional[str] = None,
+                   tool_name: Optional[str] = None, details: Optional[str] = None) -> AdminActionLogModel:
+        """Log an admin action for audit purposes"""
+        entry = AdminActionLogModel(
+            admin_user_id=admin_user_id,
+            admin_username=admin_username,
+            action_type=action_type,
+            target_user_id=target_user_id,
+            target_username=target_username,
+            tool_name=tool_name,
+            details=details
+        )
+        self.session.add(entry)
+        return entry
+
+    def get_recent(self, limit: int = 50) -> List[AdminActionLogModel]:
+        """Get the most recent admin actions"""
+        return (
+            self.session.query(AdminActionLogModel)
+            .order_by(AdminActionLogModel.created_at.desc())
+            .limit(limit)
+            .all()
         )

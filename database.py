@@ -542,3 +542,33 @@ class ConsecutiveSignoutExemption(Base):
     
     def __repr__(self):
         return f"<ConsecutiveSignoutExemption(user={self.username}, tool={self.tool_name})>"
+
+
+class AdminActionLogModel(Base):
+    """Audit log for admin actions (cooldowns, exemptions, limit changes, etc.)"""
+    __tablename__ = "admin_action_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Who performed the action
+    admin_user_id = Column(String(50), nullable=False, index=True)
+    admin_username = Column(String(100), nullable=False)
+
+    # What action
+    action_type = Column(String(50), nullable=False, index=True)  # e.g. force_cooldown, grant_exemption, etc.
+
+    # Context
+    target_user_id = Column(String(50))
+    target_username = Column(String(100))
+    tool_name = Column(String(100))
+    details = Column(Text)  # JSON or free-text details
+
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index('idx_admin_action_type_time', 'action_type', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f"<AdminActionLog(admin={self.admin_username}, action={self.action_type}, target={self.target_username})>"

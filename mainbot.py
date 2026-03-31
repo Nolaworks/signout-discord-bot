@@ -1259,6 +1259,8 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             from repositories import ConsecutiveSignoutRepository
             consecutive_repo = ConsecutiveSignoutRepository(session)
             consecutive_repo.increment_consecutive(user_id, username, tool.id, tool_name, end_time, duration)
+            # Reset other users' counters for fairness
+            consecutive_repo.reset_others_on_signout(user_id, tool.id)
         
         session.commit()
         
@@ -1391,7 +1393,7 @@ async def cancel_reservation(interaction: discord.Interaction, reservation: str)
         consecutive_repo = ConsecutiveSignoutRepository(session)
         tracker = consecutive_repo.get_tracker(user_id, res.tool_id)
         if tracker and tracker.consecutive_count > 0:
-            tracker.consecutive_count -= 1
+            tracker.consecutive_count = max(0, tracker.consecutive_count - 1)
             tracker.updated_at = datetime.now(timezone.utc)
             logger.info(f"Decremented consecutive count for {res.username} on {tool_name} due to cancellation")
         
@@ -1460,6 +1462,15 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
             # Mark as returned
             res.status = ReservationStatusEnum.RETURNED
             res.returned_at = datetime.utcnow()
+            
+            # Update consecutive signout tracking
+            from repositories import ConsecutiveSignoutRepository
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            consecutive_repo.handle_signout_ended(
+                user_id, interaction.user.name, tool.id, tool_name,
+                res.returned_at
+            )
+            
             session.commit()
             
             # Send success message publicly
@@ -1489,6 +1500,15 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
         # Non-Tool Room return - simple confirmation
         res.status = ReservationStatusEnum.RETURNED
         res.returned_at = datetime.utcnow()
+        
+        # Update consecutive signout tracking
+        from repositories import ConsecutiveSignoutRepository
+        consecutive_repo = ConsecutiveSignoutRepository(session)
+        consecutive_repo.handle_signout_ended(
+            user_id, interaction.user.name, tool.id if tool else None, tool_name,
+            res.returned_at
+        )
+        
         session.commit()
         
         await interaction.response.send_message(
