@@ -727,8 +727,10 @@ class ConsecutiveSignoutRepository:
         if tracker.cooldown_expires_at > now:
             return True, tracker.cooldown_expires_at
         else:
-            # Cooldown expired, clear it
+            # Cooldown expired, clear it and reset consecutive count
             tracker.cooldown_expires_at = None
+            tracker.consecutive_count = 0
+            tracker.accumulated_hours = 0.0
             tracker.updated_at = datetime.utcnow()
             return False, None
     

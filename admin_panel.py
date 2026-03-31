@@ -870,6 +870,12 @@ class AdminPanel(commands.Cog):
                     active_cooldowns.append(
                         f"• **{tracker.username}**: {hours_left:.1f}h remaining"
                     )
+                elif tracker.cooldown_expires_at and tracker.cooldown_expires_at <= now:
+                    # Cooldown expired — reset stale tracker
+                    tracker.cooldown_expires_at = None
+                    tracker.consecutive_count = 0
+                    tracker.accumulated_hours = 0.0
+                    tracker.updated_at = now
                 # Check if approaching limit
                 elif tracker.consecutive_count > 0:
                     approaching_limit.append(
