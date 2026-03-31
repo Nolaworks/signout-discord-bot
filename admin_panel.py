@@ -915,6 +915,60 @@ class AdminPanel(commands.Cog):
             
             logger.info(f"Admin {interaction.user.name} cleared cooldown for {username} on {tool_name}")
 
+    async def force_cooldown(self, interaction: discord.Interaction, username: str,
+                            cooldown_hours: int, reason: str = None):
+        """Force a cooldown on a user for the current tool"""
+        tool_name = await validate_tool_channel(interaction)
+        if tool_name is None:
+            return
+        
+        if cooldown_hours < 1:
+            await interaction.response.send_message(
+                "Cooldown must be at least 1 hour.",
+                ephemeral=True
+            )
+            return
+        
+        with get_db_session() as session:
+            tool_repo = ToolRepository(session)
+            user_repo = UserRepository(session)
+            consecutive_repo = ConsecutiveSignoutRepository(session)
+            
+            tool = tool_repo.get_by_name(tool_name)
+            if not tool:
+                await interaction.response.send_message(
+                    f"Tool `{tool_name}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            user = user_repo.get_by_username(username)
+            if not user:
+                await interaction.response.send_message(
+                    f"User `{username}` not found.",
+                    ephemeral=True
+                )
+                return
+            
+            expires_at = consecutive_repo.force_cooldown(
+                user.user_id, username, tool.id, tool_name, cooldown_hours
+            )
+            session.commit()
+            
+            from time_utils import CENTRAL_TZ
+            import pytz
+            expires_ct = expires_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ)
+            reason_text = f"\n**Reason:** {reason}" if reason else ""
+            
+            await interaction.response.send_message(
+                f"Forced cooldown on **{username}** for **{tool_name}**.{reason_text}\n\n"
+                f"They cannot sign out this tool until:\n"
+                f"**{expires_ct.strftime('%m/%d/%Y at %I:%M %p CT')}** ({cooldown_hours} hours from now)",
+                ephemeral=False
+            )
+            
+            logger.info(f"Admin {interaction.user.name} forced {cooldown_hours}h cooldown on {username} for {tool_name}")
+
     async def exempt_user(self, interaction: discord.Interaction, username: str, 
                          duration_hours: int = None, reason: str = None):
         """Grant a user exemption from consecutive signout limits"""
@@ -1884,6 +1938,19 @@ class AdminPanel(commands.Cog):
     async def limit_clear(self, interaction: discord.Interaction, username: str):
         """Clear cooldown - nested grouped version"""
         await self.clear_cooldown(interaction, username)
+    
+    @limit_group.command(name="force", description="Force a cooldown on a user for current tool")
+    @app_commands.describe(
+        username="Username to put into cooldown",
+        cooldown_hours="Hours the cooldown should last",
+        reason="Reason for forcing cooldown (optional)"
+    )
+    @app_commands.autocomplete(username=user_autocomplete)
+    @is_admin_check()
+    async def limit_force(self, interaction: discord.Interaction, username: str,
+                          cooldown_hours: int, reason: str = None):
+        """Force cooldown - nested grouped version"""
+        await self.force_cooldown(interaction, username, cooldown_hours, reason)
     
     # ===== /admin exempt group commands =====
     

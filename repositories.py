@@ -680,6 +680,31 @@ class ConsecutiveSignoutRepository:
         
         return None
     
+    def force_cooldown(self, user_id: str, username: str, tool_id: int, tool_name: str,
+                       cooldown_hours: int) -> datetime:
+        """Force a cooldown on a user, creating a tracker if one doesn't exist."""
+        from datetime import timedelta
+        tracker = self.get_tracker(user_id, tool_id)
+        cooldown_expires = datetime.utcnow() + timedelta(hours=cooldown_hours)
+        
+        if not tracker:
+            tracker = ConsecutiveSignoutTracker(
+                user_id=user_id,
+                username=username,
+                tool_id=tool_id,
+                tool_name=tool_name,
+                consecutive_count=0,
+                accumulated_hours=0.0,
+                last_signout_ended_at=datetime.utcnow(),
+                cooldown_expires_at=cooldown_expires
+            )
+            self.session.add(tracker)
+        else:
+            tracker.cooldown_expires_at = cooldown_expires
+            tracker.updated_at = datetime.utcnow()
+        
+        return cooldown_expires
+    
     def is_in_cooldown(self, user_id: str, tool_id: int) -> tuple[bool, Optional[datetime]]:
         """Check if user is in cooldown period. Returns (is_in_cooldown, expires_at)"""
         tracker = self.get_tracker(user_id, tool_id)
