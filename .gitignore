@@ -1,4 +1,5 @@
 signout-venv
+bot.log
 __pycache__
 .bash_history
 .bash_logout
@@ -8,5 +9,16 @@ __pycache__
 .profile
 .sudo_as_admin_successful
 .wget-hsts
-tools.json
-history.csv
+tools.*
+history.*
+.bot-*
+history.csv.*
+
+
+# Environment file with secrets
+.env
+.env.*
+
+# Database backups
+backups/
+

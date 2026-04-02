@@ -95,7 +95,7 @@ Friday, Fri
 Saturday, Sat  
 Sunday, Sun
 
-Also accept "tomorrow", "tom", and "next [weekday]".
+Also accept "tomorrow", "tom", "tmo" and "next [weekday]".
 
 Always resolve to the next future occurrence.
 
@@ -204,4 +204,183 @@ Now process: "{time_str}"
             return formatted_time
         except ValueError:
             logging.error(f"Malformed time from OpenAI: {formatted_time}")
+        return None
+    
+
+async def rewrite_reservation_with_gpt(client: AsyncOpenAI, *, 
+                                       original_text: str,
+                                       choice: str,            # "start"|"end"|"range"
+                                       new_value: str,
+                                       tz_name: str = "America/Chicago") -> str:
+    """
+    Returns a full normalized range 'MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM' in tz_name.
+    The model must output only that line.
+    """
+    # Get current time in the specified timezone for context
+    central_tz = pytz.timezone(tz_name)
+    current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
+    current_day = datetime.datetime.now(central_tz).strftime("%A")  # e.g., "Saturday"
+    
+    sys = f"""You convert and rewrite human time requests into a single normalized range.
+- Timezone: {tz_name}.
+- Current date and time: {current_time} ({current_day})
+- Output EXACTLY: 'MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM' with 24h minutes.
+- When interpreting relative terms (today, tomorrow, next Tuesday, etc.), use the current date above.
+- If input is ambiguous, infer the soonest valid future times by default.
+- Never add text besides the one line.
+"""
+    user = f"""Current reservation text (verbatim):
+<<<{original_text}>>>
+
+User wants to change: {choice}
+New value: {new_value}
+
+Task: Rewrite the ENTIRE reservation as one normalized range for the same intent and tool.
+Remember: Output ONLY the final normalized range."""
+    rsp = await client.chat.completions.create(
+        model="gpt-4o-mini",  # your current small model
+        messages=[{"role":"system","content":sys},
+                  {"role":"user","content":user}],
+        temperature=0
+    )
+    return rsp.choices[0].message.content.strip()
+
+
+async def parse_historical_time_range(time_str):
+    """
+    Uses OpenAI to parse time ranges for historical queries (allows past dates).
+    Used for photo queries and other backward-looking searches.
+    Returns MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM format.
+    """
+    central_tz = pytz.timezone("America/Chicago")
+    current_time = datetime.datetime.now(central_tz).strftime("%m-%d-%Y %H:%M")
+
+    prompt = f"""
+
+You are a time range parser for historical data queries. Convert the following time expression into a standard format:
+
+Times can be past, present, or future.
+
+- Always return a range: MM-DD-YYYY HH:MM to MM-DD-YYYY HH:MM
+
+---
+
+Interpretation Rules:
+
+1. Accepted Range Connectors
+
+Interpret the following as equivalent: "to", "until", "til", "till", "untill", and "-".
+
+"dec 10 to dec 15" → 12-10-YYYY 00:00 to 12-15-YYYY 23:59
+
+---
+
+2. Backward-Looking Relative Terms
+
+"today" → 00:00 today to 23:59 today
+"yesterday" → 00:00 yesterday to 23:59 yesterday
+"last 3 days" → 00:00 three days ago to 23:59 today
+"last week" → 00:00 seven days ago to 23:59 today
+"last 2 weeks" → 00:00 fourteen days ago to 23:59 today
+"last month" → 00:00 thirty days ago to 23:59 today
+"this week" → 00:00 of most recent Monday to 23:59 today
+"this month" → 00:00 of first day of current month to 23:59 today
+
+---
+
+3. Date Ranges
+
+Formats like "MM/DD to MM/DD", "M/D - M/DD", or "MM/DD/YYYY to MM/DD/YYYY":
+
+- Start time is 00:00 of the first day.
+- End time is 23:59 of the last day.
+
+"03/29 to 03/30" → 03-29-YYYY 00:00 to 03-30-YYYY 23:59  
+"12/10/2025 to 12/15/2025" → 12-10-2025 00:00 to 12-15-2025 23:59
+"dec 10 to dec 15" → 12-10-YYYY 00:00 to 12-15-YYYY 23:59
+
+---
+
+4. Single Day or Time
+
+If only a single day is mentioned:
+
+"december 15" → 12-15-YYYY 00:00 to 12-15-YYYY 23:59
+"monday" → Most recent Monday 00:00 to 23:59
+"12/15" → 12-15-YYYY 00:00 to 12-15-YYYY 23:59
+
+---
+
+5. Day Names and Abbreviations
+
+Accept full or abbreviated weekday names:
+
+Monday, Mon  
+Tuesday, Tue, Tues  
+Wednesday, Wed, Weds  
+Thursday, Thu, Thurs  
+Friday, Fri  
+Saturday, Sat  
+Sunday, Sun
+
+For single weekdays, resolve to the most recent occurrence (can be today or in the past).
+
+On Wednesday, "Monday" → most recent Monday 00:00 to 23:59
+On Wednesday, "Thursday" → most recent Thursday (last week) 00:00 to 23:59
+
+---
+
+6. Natural Language Month Names
+
+Accept full or abbreviated month names:
+
+January, Jan  
+February, Feb  
+March, Mar  
+April, Apr  
+May  
+June, Jun  
+July, Jul  
+August, Aug  
+September, Sep, Sept  
+October, Oct  
+November, Nov  
+December, Dec
+
+"dec 1 to dec 15" → 12-01-YYYY 00:00 to 12-15-YYYY 23:59
+
+---
+
+Constraints:
+
+- DO NOT return any extra text, explanations, or timezone info.
+- ALWAYS return a time range, never a single time.
+- Use this current date and time: {current_time} (U.S. Central Time)
+- If the expression is invalid or ambiguous, return "ERROR".
+
+---
+
+Now process: "{time_str}"
+
+"""
+
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "system", "content": prompt}]
+    )
+
+    formatted_time = response.choices[0].message.content.strip()
+    logging.info(f"OpenAI historical time range response: {formatted_time}")
+
+    if "to" in formatted_time and formatted_time != "ERROR":
+        try:
+            start_time_str, end_time_str = formatted_time.split(" to ")
+            start_time = datetime.datetime.strptime(start_time_str, "%m-%d-%Y %H:%M")
+            end_time = datetime.datetime.strptime(end_time_str, "%m-%d-%Y %H:%M")
+            return f"{start_time.strftime('%m-%d-%Y %H:%M')} to {end_time.strftime('%m-%d-%Y %H:%M')}"
+        except ValueError:
+            logging.error(f"Malformed time range from OpenAI: {formatted_time}")
+            return None
+    else:
+        logging.error(f"Invalid response from OpenAI: {formatted_time}")
         return None
