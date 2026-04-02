@@ -13,7 +13,7 @@ from db_session import get_db_session, init_database, close_database
 from repositories import UserRepository, ToolRepository, ReservationRepository, ReservationHistoryRepository
 from database import ReservationStatusEnum, UserModel
 from gptparse import parse_time_with_gpt, rewrite_reservation_with_gpt
-from time_utils import parse_time_range, get_now, calculate_duration_hours, CENTRAL_TZ, format_datetime
+from time_utils import parse_time_range, get_now, calculate_duration_hours, CENTRAL_TZ, format_datetime, to_aware
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
     user_is_admin, user_is_developer, get_user_display_name, get_user_id,
@@ -133,8 +133,17 @@ async def clean_expired_signouts():
                         
                         # Check for welder reservations needing end PSI
                         if 'welder' in reservation.tool_name.lower() and reservation.welding_gas_psi_end is None:
-                            logger.info(f"Keeping {reservation.status.value} reservation {reservation.username} - {reservation.tool_name} (needs end PSI)")
-                            continue
+                            # Admin-block reservations can never provide PSI via DM - archive immediately
+                            if reservation.username.startswith('admin-block'):
+                                logger.info(f"Archiving admin-block welder reservation {reservation.tool_name} (cannot provide end PSI)")
+                            else:
+                                # Give users 24 hours to provide end PSI before archiving
+                                end_aware = to_aware(reservation.end_time) if reservation.end_time else None
+                                if end_aware and (now - end_aware).total_seconds() < 86400:  # 24 hours
+                                    logger.info(f"Keeping {reservation.status.value} reservation {reservation.username} - {reservation.tool_name} (needs end PSI)")
+                                    continue
+                                else:
+                                    logger.info(f"Archiving {reservation.status.value} reservation {reservation.username} - {reservation.tool_name} (end PSI not provided within 24 hours)")
                     
                     # Archive to history (with current status: EXPIRED, CANCELLED, RETURNED)
                     history_repo.archive_reservation(reservation)
@@ -505,49 +514,61 @@ async def handle_dm_psi_input(message: discord.Message):
     with get_db_session() as session:
         res_repo = ReservationRepository(session)
         
-        from sqlalchemy import and_
+        from sqlalchemy import and_, or_
         from database import ReservationModel
         from time_utils import get_now, CENTRAL_TZ, to_aware
         
         # Priority 1: Look for ACTIVE welder reservations missing START PSI
+        # Only consider reservations that haven't passed their end_time yet
+        now = get_now(CENTRAL_TZ)
+        now_naive = now.replace(tzinfo=None)
+        
         active_welder = session.query(ReservationModel).filter(
             and_(
                 ReservationModel.user_id == user_id,
                 ReservationModel.status == ReservationStatusEnum.ACTIVE,
                 ReservationModel.welding_gas_psi.is_(None),
-                ReservationModel.tool_name.ilike('%welder%')
+                ReservationModel.tool_name.ilike('%welder%'),
+                ReservationModel.end_time > now_naive  # Skip if past end time (awaiting cleanup)
             )
         ).order_by(ReservationModel.start_time.desc()).first()
         
         if active_welder:
-            now = get_now(CENTRAL_TZ)
             start_aware = to_aware(active_welder.start_time)
             time_diff_minutes = (now - start_aware).total_seconds() / 60
             
-            # Allow start PSI input from 10 min before to 10 min after start
-            if -10 <= time_diff_minutes <= 10:
-                active_welder.welding_gas_psi = psi_value
-                session.commit()
-                
-                embed = notification_manager.build_welder_psi_received_embed(active_welder, psi_value, is_end=False)
-                await message.channel.send(embed=embed)
-                logger.info(f"Recorded start PSI {psi_value} via DM for {username} - {active_welder.tool_name}")
-                return
-            else:
+            # Block if reservation hasn't started yet (more than 10 min before start)
+            if time_diff_minutes < -10:
+                logger.info(f"Rejected start PSI {psi_value} via DM for {username} - {active_welder.tool_name} (reservation not started yet)")
                 await message.channel.send(
-                    f"The start PSI entry window for **{active_welder.tool_name}** has passed "
-                    f"(10 minutes before to 10 minutes after signout start).\n"
-                    f"You can use `/psi` in the signout channel to enter it."
+                    f"Your **{active_welder.tool_name}** reservation hasn't started yet. "
+                    f"You can enter PSI within 10 minutes before your signout starts."
                 )
                 return
+            
+            # Record start PSI (allow any time after -10 min, consistent with /psi command)
+            active_welder.welding_gas_psi = psi_value
+            session.commit()
+            
+            embed = notification_manager.build_welder_psi_received_embed(active_welder, psi_value, is_end=False)
+            await message.channel.send(embed=embed)
+            logger.info(f"Recorded start PSI {psi_value} via DM for {username} - {active_welder.tool_name}")
+            return
         
         # Priority 2: Look for EXPIRED/RETURNED welder reservations needing END PSI
+        # Also check ACTIVE reservations past their end_time (cleanup hasn't run yet)
         end_psi_welder = session.query(ReservationModel).filter(
             and_(
                 ReservationModel.user_id == user_id,
-                ReservationModel.status.in_([ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED]),
                 ReservationModel.welding_gas_psi_end.is_(None),
-                ReservationModel.tool_name.ilike('%welder%')
+                ReservationModel.tool_name.ilike('%welder%'),
+                or_(
+                    ReservationModel.status.in_([ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED]),
+                    and_(
+                        ReservationModel.status == ReservationStatusEnum.ACTIVE,
+                        ReservationModel.end_time <= now_naive  # ACTIVE but past end time
+                    )
+                )
             )
         ).order_by(ReservationModel.end_time.desc()).first()
         
@@ -1710,22 +1731,25 @@ async def psi_command(interaction: discord.Interaction, value: float):
     with get_db_session() as session:
         res_repo = ReservationRepository(session)
         
-        from sqlalchemy import and_
+        from sqlalchemy import and_, or_
         from database import ReservationModel as RM
         from time_utils import get_now, CENTRAL_TZ, to_aware
         
-        # Priority 1: Active reservation needing start PSI
+        now = get_now(CENTRAL_TZ)
+        now_naive = now.replace(tzinfo=None)
+        
+        # Priority 1: Active reservation needing start PSI (only if not past end time)
         reservation = session.query(RM).filter(
             and_(
                 RM.user_id == user_id,
                 RM.tool_name == tool_name,
                 RM.status == ReservationStatusEnum.ACTIVE,
                 RM.welding_gas_psi.is_(None),
+                RM.end_time > now_naive  # Skip if past end time (awaiting cleanup)
             )
         ).order_by(RM.start_time.desc()).first()
         
         if reservation:
-            now = get_now(CENTRAL_TZ)
             start_aware = to_aware(reservation.start_time)
             time_diff_minutes = (now - start_aware).total_seconds() / 60
             
@@ -1746,12 +1770,19 @@ async def psi_command(interaction: discord.Interaction, value: float):
             return
         
         # Priority 2: Expired/returned reservation needing end PSI
+        # Also check ACTIVE reservations past their end_time (cleanup hasn't run yet)
         end_reservation = session.query(RM).filter(
             and_(
                 RM.user_id == user_id,
                 RM.tool_name == tool_name,
-                RM.status.in_([ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED]),
                 RM.welding_gas_psi_end.is_(None),
+                or_(
+                    RM.status.in_([ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED]),
+                    and_(
+                        RM.status == ReservationStatusEnum.ACTIVE,
+                        RM.end_time <= now_naive
+                    )
+                )
             )
         ).order_by(RM.end_time.desc()).first()
         
@@ -1765,11 +1796,13 @@ async def psi_command(interaction: discord.Interaction, value: float):
             return
         
         # Check for active reservation with PSI already entered (start PSI already done)
+        # Only show this if the reservation hasn't passed its end time
         active_with_psi = session.query(RM).filter(
             and_(
                 RM.user_id == user_id,
                 RM.tool_name == tool_name,
                 RM.status == ReservationStatusEnum.ACTIVE,
+                RM.end_time > now_naive,
             )
         ).first()
         

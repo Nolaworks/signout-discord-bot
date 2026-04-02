@@ -2339,56 +2339,93 @@ class AdminPanel(commands.Cog):
                         })
             
             if tools_with_roles:
-                # Split into embeds of max 25 fields each (Discord limit)
-                for chunk_start in range(0, len(tools_with_roles), 25):
-                    chunk = tools_with_roles[chunk_start:chunk_start + 25]
-                    chunk_num = chunk_start // 25 + 1
-                    total_chunks = (len(tools_with_roles) + 24) // 25
+                # Build role fields, then split into embeds that stay under Discord's 6000 char limit
+                role_fields = []
+                for tool_info in tools_with_roles:
+                    with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
+                    without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
                     
-                    title = "🎭 Tool Role Access Summary"
-                    if total_chunks > 1:
-                        title += f" ({chunk_num}/{total_chunks})"
+                    requirement_status = "[REQUIRED]" if tool_info['role_required'] else "[Optional]"
                     
-                    role_embed = discord.Embed(
-                        title=title,
-                        description="Overview of all tools with roles and user access",
-                        color=discord.Color.blue()
+                    field_value = (
+                        f"**Status:** {requirement_status}\n"
+                        f"**Has Access ({len(tool_info['with_role'])}):** {with_role_text}\n\n"
+                        f"**Needs Access ({len(tool_info['without_role'])}):** {without_role_text}"
                     )
                     
-                    for tool_info in chunk:
-                        with_role_text = ", ".join(tool_info['with_role']) if tool_info['with_role'] else "None"
-                        without_role_text = ", ".join(tool_info['without_role']) if tool_info['without_role'] else "None"
-                        
-                        requirement_status = "[REQUIRED]" if tool_info['role_required'] else "[Optional]"
-                        
+                    if len(field_value) > 1024:
                         field_value = (
                             f"**Status:** {requirement_status}\n"
-                            f"**Has Access ({len(tool_info['with_role'])}):** {with_role_text}\n\n"
-                            f"**Needs Access ({len(tool_info['without_role'])}):** {without_role_text}"
-                        )
-                        
-                        if len(field_value) > 1024:
-                            field_value = (
-                                f"**Status:** {requirement_status}\n"
-                                f"**Has Access:** {len(tool_info['with_role'])} users\n"
-                                f"**Needs Access:** {len(tool_info['without_role'])} users\n"
-                                f"(Too many to list - use Discord role view)"
-                            )
-                        
-                        role_embed.add_field(
-                            name=f"{tool_info['tool']}",
-                            value=field_value,
-                            inline=False
+                            f"**Has Access:** {len(tool_info['with_role'])} users\n"
+                            f"**Needs Access:** {len(tool_info['without_role'])} users\n"
+                            f"(Too many to list - use Discord role view)"
                         )
                     
-                    role_embed.set_footer(text="Use /admin role assign to grant access | /admin role toggle to change requirements")
+                    role_fields.append((tool_info['tool'], field_value))
+                
+                # Split fields into embeds respecting 6000 char and 25 field Discord limits
+                EMBED_CHAR_LIMIT = 5800  # Leave margin under 6000
+                footer_text = "Use /admin role assign to grant access | /admin role toggle to change requirements"
+                base_title = "🎭 Tool Role Access Summary"
+                base_desc = "Overview of all tools with roles and user access"
+                base_overhead = len(base_title) + 20 + len(base_desc) + len(footer_text)
+                
+                current_fields = []
+                current_size = base_overhead
+                embed_num = 0
+                
+                for field_name, field_value in role_fields:
+                    field_size = len(field_name) + len(field_value)
+                    
+                    if current_fields and (current_size + field_size > EMBED_CHAR_LIMIT or len(current_fields) >= 25):
+                        # Flush current embed
+                        embed_num += 1
+                        title = base_title + (f" ({embed_num})" if len(role_fields) > len(current_fields) else "")
+                        role_embed = discord.Embed(title=title, description=base_desc, color=discord.Color.blue())
+                        for fn, fv in current_fields:
+                            role_embed.add_field(name=fn, value=fv, inline=False)
+                        role_embed.set_footer(text=footer_text)
+                        embeds.append(role_embed)
+                        current_fields = []
+                        current_size = base_overhead
+                    
+                    current_fields.append((field_name, field_value))
+                    current_size += field_size
+                
+                if current_fields:
+                    embed_num += 1
+                    title = base_title + (f" ({embed_num})" if embed_num > 1 else "")
+                    role_embed = discord.Embed(title=title, description=base_desc, color=discord.Color.blue())
+                    for fn, fv in current_fields:
+                        role_embed.add_field(name=fn, value=fv, inline=False)
+                    role_embed.set_footer(text=footer_text)
                     embeds.append(role_embed)
             
             session.commit()
         
-        # Discord allows max 10 embeds per message — send in batches if needed
-        for i in range(0, len(embeds), 10):
-            batch = embeds[i:i + 10]
+        # Send embeds respecting Discord's 6000 total char limit per message and max 10 embeds
+        def _embed_len(e):
+            total = len(e.title or '') + len(e.description or '')
+            if e.footer and e.footer.text:
+                total += len(e.footer.text)
+            if e.author and e.author.name:
+                total += len(e.author.name)
+            for f in e.fields:
+                total += len(f.name or '') + len(f.value or '')
+            return total
+        
+        MESSAGE_CHAR_LIMIT = 5800  # Leave margin under 6000
+        batch = []
+        batch_size = 0
+        for embed in embeds:
+            embed_size = _embed_len(embed)
+            if batch and (batch_size + embed_size > MESSAGE_CHAR_LIMIT or len(batch) >= 10):
+                await interaction.followup.send(embeds=batch, ephemeral=True)
+                batch = []
+                batch_size = 0
+            batch.append(embed)
+            batch_size += embed_size
+        if batch:
             await interaction.followup.send(embeds=batch, ephemeral=True)
     
     @admin_group.command(name="help", description="Admin command reference")

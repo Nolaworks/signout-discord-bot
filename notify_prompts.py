@@ -322,15 +322,15 @@ class WelderPsiExpirationPrompts:
             f"Your **{tool_name}** reservation has ended.\n\n"
             f"Please reply to this message with the **ending PSI number** from the "
             f"regulator gauge (e.g., `2200`), or use `/psi` in the signout channel.\n\n"
-            f"This is your only reminder — please respond at your earliest convenience."
+            f"Please respond at your earliest convenience."
         )
 
 
 class WelderPsiReceivedPrompts:
     """Confirmation when welding gas PSI is received"""
 
-    TITLE_START = "✅ Starting PSI Recorded"
-    TITLE_END = "✅ Ending PSI Recorded"
+    TITLE_START = "Starting PSI Recorded"
+    TITLE_END = "Ending PSI Recorded"
 
     @staticmethod
     def description(tool_name: str, psi_value: float, is_end: bool = False) -> str:
