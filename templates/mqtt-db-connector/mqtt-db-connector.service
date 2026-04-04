@@ -1,0 +1,15 @@
+[Unit]
+Description=MQTT-DB Connector — Tool Room Access Control
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mqtt-db-connector
+ExecStart=/opt/mqtt-db-connector/venv/bin/python3 /opt/mqtt-db-connector/connector.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/mqtt-db-connector/.env
+
+[Install]
+WantedBy=multi-user.target

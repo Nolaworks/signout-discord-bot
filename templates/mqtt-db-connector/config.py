@@ -1,0 +1,38 @@
+"""
+config.py — Configuration for the MQTT-DB connector.
+
+Reads from .env file. Drop into the mqtt-db-connector repo as config.py.
+"""
+
+import os
+import logging
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "DATABASE_URL_REDACTED192.168.30.151:5432/signout_bot",
+)
+
+# ── MQTT ──────────────────────────────────────────────────────────────────────
+MQTT_BROKER   = os.getenv("MQTT_BROKER", "localhost")
+MQTT_PORT     = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USER     = os.getenv("MQTT_USER", "toolbot-db")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "nwcomm@toolbot")
+
+# ── Topics ────────────────────────────────────────────────────────────────────
+TOPIC_CARD     = os.getenv("TOPIC_CARD", "access/room/toolroom/card")
+TOPIC_RESPONSE = os.getenv("TOPIC_RESPONSE", "access/room/toolroom/response")
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+
+def setup_logging():
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
