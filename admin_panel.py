@@ -3498,29 +3498,37 @@ class AdminPanel(commands.Cog):
             cards = card_repo.get_all()
             override = override_repo.get_current()
 
+            # Extract values while session is open to avoid DetachedInstanceError
+            override_mode = override.mode.value
+            override_username = override.set_by_username
+            card_data = [
+                {"card_id": c.card_id, "username": c.username, "enabled": c.enabled}
+                for c in cards
+            ]
+
         mode_labels = {
             "NORMAL": "🟢 Normal",
             "GRANT_ALL": "🟡 Grant All",
             "DENY_ALL": "🔴 Deny All",
         }
-        mode_str = mode_labels.get(override.mode.value, override.mode.value)
+        mode_str = mode_labels.get(override_mode, override_mode)
 
         embed = discord.Embed(
             title="🔑 RFID Access Cards",
-            description=f"**Override mode:** {mode_str} (set by {override.set_by_username})",
+            description=f"**Override mode:** {mode_str} (set by {override_username})",
             color=discord.Color.blue(),
         )
 
-        if not cards:
+        if not card_data:
             embed.add_field(name="Cards", value="No cards registered.", inline=False)
         else:
-            enabled = [c for c in cards if c.enabled]
-            disabled = [c for c in cards if not c.enabled]
+            enabled = [c for c in card_data if c["enabled"]]
+            disabled = [c for c in card_data if not c["enabled"]]
 
             if enabled:
                 lines = []
                 for c in enabled:
-                    lines.append(f"`{c.card_id}` — **{c.username}**")
+                    lines.append(f"`{c['card_id']}` — **{c['username']}**")
                 embed.add_field(
                     name=f"Enabled ({len(enabled)})",
                     value="\n".join(lines) or "None",
@@ -3528,7 +3536,7 @@ class AdminPanel(commands.Cog):
                 )
 
             if disabled:
-                lines = [f"~~`{c.card_id}`~~ — {c.username}" for c in disabled]
+                lines = [f"~~`{c['card_id']}`~~ — {c['username']}" for c in disabled]
                 embed.add_field(
                     name=f"Disabled ({len(disabled)})",
                     value="\n".join(lines) or "None",
