@@ -820,6 +820,157 @@ class NotificationManager:
         embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
         return embed
     
+    # ========== RFID Access Notifications ==========
+
+    async def send_access_granted_notification(self, session: Session, reservation: ReservationModel) -> bool:
+        """Send DM that RFID access is now active for a tool room reservation"""
+        from notify_prompts import AccessGrantedPrompts
+
+        embed = discord.Embed(
+            title=AccessGrantedPrompts.TITLE,
+            description=AccessGrantedPrompts.description(reservation.tool_name, reservation.formatted_time),
+            color=Colors.SUCCESS,
+        )
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.set_footer(text=AccessGrantedPrompts.FOOTER)
+
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"access granted for {reservation.tool_name}",
+        )
+        if result.success:
+            log_entry = NotificationLogModel(
+                user_id=reservation.user_id,
+                notification_type='access_granted',
+                tool_name=reservation.tool_name,
+                reservation_id=reservation.id,
+                message_sent=f"Access granted notification for {reservation.tool_name}",
+                success=True,
+            )
+            session.add(log_entry)
+            session.flush()
+            logger.info(f"Sent access granted notification to {reservation.username} for {reservation.tool_name}")
+        else:
+            self._log_notification_failure(
+                session, reservation.user_id, 'access_granted',
+                reservation.tool_name, reservation.id, result.error_message,
+            )
+        return result.success
+
+    async def send_access_expiring_notification(self, session: Session, reservation: ReservationModel, minutes: int) -> bool:
+        """Send DM that RFID access is ending soon"""
+        from notify_prompts import AccessExpiringPrompts
+
+        embed = discord.Embed(
+            title=AccessExpiringPrompts.TITLE,
+            description=AccessExpiringPrompts.description(reservation.tool_name, minutes),
+            color=Colors.WARNING,
+        )
+        embed.add_field(name="Tool", value=reservation.tool_name, inline=True)
+        embed.add_field(name="Reservation", value=reservation.formatted_time, inline=False)
+        embed.set_footer(text=AccessExpiringPrompts.FOOTER)
+
+        result = await send_dm(
+            self.bot, reservation.user_id, embed=embed,
+            log_context=f"access expiring for {reservation.tool_name}",
+        )
+        if result.success:
+            log_entry = NotificationLogModel(
+                user_id=reservation.user_id,
+                notification_type='access_expiring',
+                tool_name=reservation.tool_name,
+                reservation_id=reservation.id,
+                message_sent=f"Access expiring notification for {reservation.tool_name}",
+                success=True,
+            )
+            session.add(log_entry)
+            session.flush()
+            logger.info(f"Sent access expiring notification to {reservation.username} for {reservation.tool_name}")
+        else:
+            self._log_notification_failure(
+                session, reservation.user_id, 'access_expiring',
+                reservation.tool_name, reservation.id, result.error_message,
+            )
+        return result.success
+
+    async def check_access_notifications(self, session: Session) -> int:
+        """Check for tool room reservations that need RFID access notifications.
+
+        Sends 'access_granted' when a reservation starts within 10-15 min
+        (piggybacks on the reminder window).
+        Sends 'access_expiring' alongside the normal expiration warning.
+
+        Returns the number of notifications sent.
+        """
+        from database import ToolModel
+        now = get_now(CENTRAL_TZ)
+        sent_count = 0
+
+        # --- Access granted: starting in 10-15 minutes ---
+        grant_start = to_naive(now + timedelta(minutes=10))
+        grant_end = to_naive(now + timedelta(minutes=15))
+
+        upcoming = session.query(ReservationModel).join(
+            ToolModel, ReservationModel.tool_id == ToolModel.id
+        ).filter(
+            ReservationModel.status == ReservationStatusEnum.ACTIVE,
+            ToolModel.is_tool_room == True,
+            ReservationModel.start_time >= grant_start,
+            ReservationModel.start_time < grant_end,
+        ).all()
+
+        for res in upcoming:
+            # Deduplicate via notification log
+            recent = session.query(NotificationLogModel).filter(
+                NotificationLogModel.user_id == res.user_id,
+                NotificationLogModel.reservation_id == res.id,
+                NotificationLogModel.notification_type == 'access_granted',
+                NotificationLogModel.sent_at >= to_naive(now - timedelta(minutes=30)),
+            ).first()
+            if recent:
+                continue
+
+            # Only send if user has an RFID card
+            from repositories import RfidCardRepository
+            rfid_repo = RfidCardRepository(session)
+            if rfid_repo.get_enabled_card_for_user(res.user_id):
+                await self.send_access_granted_notification(session, res)
+                sent_count += 1
+
+        # --- Access expiring: ending in 10-15 minutes ---
+        expire_start = to_naive(now + timedelta(minutes=10))
+        expire_end = to_naive(now + timedelta(minutes=15))
+
+        expiring = session.query(ReservationModel).join(
+            ToolModel, ReservationModel.tool_id == ToolModel.id
+        ).filter(
+            ReservationModel.status == ReservationStatusEnum.ACTIVE,
+            ToolModel.is_tool_room == True,
+            ReservationModel.end_time >= expire_start,
+            ReservationModel.end_time < expire_end,
+        ).all()
+
+        for res in expiring:
+            recent = session.query(NotificationLogModel).filter(
+                NotificationLogModel.user_id == res.user_id,
+                NotificationLogModel.reservation_id == res.id,
+                NotificationLogModel.notification_type == 'access_expiring',
+                NotificationLogModel.sent_at >= to_naive(now - timedelta(minutes=30)),
+            ).first()
+            if recent:
+                continue
+
+            from repositories import RfidCardRepository
+            rfid_repo = RfidCardRepository(session)
+            if rfid_repo.get_enabled_card_for_user(res.user_id):
+                end_aware = to_aware(res.end_time)
+                mins = int((end_aware - now).total_seconds() / 60)
+                await self.send_access_expiring_notification(session, res, mins)
+                sent_count += 1
+
+        return sent_count
+
     # ========== Utility Methods ==========
     
     def _log_notification_failure(self, session: Session, user_id: str, notification_type: str,

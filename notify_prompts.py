@@ -385,3 +385,36 @@ class DailySummaryPrompts:
     @staticmethod
     def description(date_str: str) -> str:
         return f"Statistics for {date_str}"
+
+
+# ========== RFID Access Notifications ==========
+
+class AccessGrantedPrompts:
+    """Prompts for RFID access granted notifications"""
+
+    TITLE = "🔑 Tool Room Access Active"
+    FOOTER = "Access is granted 10 minutes before and after your reservation window."
+
+    @staticmethod
+    def description(tool_name: str, formatted_time: str) -> str:
+        return (
+            f"Your RFID card will grant physical access to the tool room for your "
+            f"**{tool_name}** reservation.\n\n"
+            f"**Reservation:** {formatted_time}\n\n"
+            f"Tap your card at the reader when you arrive."
+        )
+
+
+class AccessExpiringPrompts:
+    """Prompts for RFID access expiring notifications"""
+
+    TITLE = "🔒 Tool Room Access Ending Soon"
+    FOOTER = "Return your tool and exit the tool room before access expires."
+
+    @staticmethod
+    def description(tool_name: str, minutes: int) -> str:
+        return (
+            f"Your **{tool_name}** reservation expires in **{minutes} minutes**.\n\n"
+            f"Physical tool room access will end **10 minutes** after expiration. "
+            f"Please wrap up and return the tool."
+        )

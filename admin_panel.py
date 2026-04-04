@@ -34,7 +34,7 @@ from discord_utils import (
     user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id,
     validate_tool_channel, send_dm
 )
-from autocomplete import user_autocomplete, reservation_autocomplete, admin_user_autocomplete
+from autocomplete import user_autocomplete, reservation_autocomplete, admin_user_autocomplete, rfid_user_autocomplete
 from validation import validate_max_time_hours
 from exceptions import InvalidToolChannelError
 
@@ -143,6 +143,12 @@ class AdminPanel(commands.Cog):
     debt_group = app_commands.Group(
         name="debt",
         description="Photo debt management",
+        parent=admin_group
+    )
+    
+    access_group = app_commands.Group(
+        name="access",
+        description="RFID access card management",
         parent=admin_group
     )
     
@@ -3222,6 +3228,227 @@ class AdminPanel(commands.Cog):
                 ephemeral=True
             )
             logger.info(f"Admin {interaction.user.name} bulk approved {count} photos for {username} - {tool_name}")
+
+    # ========== RFID Access Card Management ==========
+
+    @access_group.command(name="add", description="Register an RFID access card for a user")
+    @app_commands.describe(
+        user="Discord user to assign the card to",
+        card_id="Wiegand 34-bit card number (decimal)",
+        admin_card="Mark card as admin (bypasses DENY_ALL override)"
+    )
+    @app_commands.autocomplete(user=admin_user_autocomplete)
+    @is_admin_check()
+    async def access_add(self, interaction: discord.Interaction, user: str,
+                         card_id: str, admin_card: bool = False):
+        """Register an RFID card for a Discord user"""
+        # Validate card_id: numeric, max 20 chars
+        if not card_id.isdigit() or len(card_id) > 20:
+            await interaction.response.send_message(
+                "❌ Card ID must be a numeric string up to 20 digits.",
+                ephemeral=True
+            )
+            return
+
+        # Resolve the target user
+        member = discord.utils.find(
+            lambda m: m.name == user or m.display_name == user,
+            interaction.guild.members
+        )
+        if not member:
+            await interaction.response.send_message(
+                f"❌ Could not find member **{user}** in this server.",
+                ephemeral=True
+            )
+            return
+
+        target_user_id = str(member.id)
+        target_username = member.name
+
+        with get_db_session() as session:
+            from repositories import RfidCardRepository, AdminActionLogRepository
+            card_repo = RfidCardRepository(session)
+
+            if card_repo.card_id_exists(card_id):
+                existing = card_repo.get_by_card_id(card_id)
+                await interaction.response.send_message(
+                    f"❌ Card `{card_id}` is already registered to **{existing.username}**.",
+                    ephemeral=True
+                )
+                return
+
+            card_repo.add_card(
+                user_id=target_user_id,
+                card_id=card_id,
+                username=target_username,
+                is_admin=admin_card,
+            )
+
+            log_repo = AdminActionLogRepository(session)
+            log_repo.log_action(
+                admin_user_id=str(interaction.user.id),
+                admin_username=interaction.user.name,
+                action_type="access_add",
+                target_user_id=target_user_id,
+                target_username=target_username,
+                details=f"card_id={card_id}, is_admin={admin_card}",
+            )
+            session.commit()
+
+        flag = " (admin)" if admin_card else ""
+        await interaction.response.send_message(
+            f"✅ Registered RFID card `{card_id}` for **{member.display_name}**{flag}.",
+            ephemeral=True,
+        )
+        logger.info(f"Admin {interaction.user.name} registered RFID card {card_id} for {target_username}")
+
+    @access_group.command(name="revoke", description="Revoke RFID access for a user")
+    @app_commands.describe(user="User whose card(s) to revoke")
+    @app_commands.autocomplete(user=rfid_user_autocomplete)
+    @is_admin_check()
+    async def access_revoke(self, interaction: discord.Interaction, user: str):
+        """Disable all RFID cards for a user"""
+        member = discord.utils.find(
+            lambda m: m.name == user or m.display_name == user,
+            interaction.guild.members
+        )
+        if not member:
+            await interaction.response.send_message(
+                f"❌ Could not find member **{user}** in this server.",
+                ephemeral=True
+            )
+            return
+
+        target_user_id = str(member.id)
+        target_username = member.name
+
+        with get_db_session() as session:
+            from repositories import RfidCardRepository, AdminActionLogRepository
+            card_repo = RfidCardRepository(session)
+
+            count = card_repo.revoke_all_for_user(target_user_id)
+            if count == 0:
+                await interaction.response.send_message(
+                    f"ℹ️ **{member.display_name}** has no enabled RFID cards.",
+                    ephemeral=True,
+                )
+                return
+
+            log_repo = AdminActionLogRepository(session)
+            log_repo.log_action(
+                admin_user_id=str(interaction.user.id),
+                admin_username=interaction.user.name,
+                action_type="access_revoke",
+                target_user_id=target_user_id,
+                target_username=target_username,
+                details=f"Revoked {count} card(s)",
+            )
+            session.commit()
+
+        await interaction.response.send_message(
+            f"✅ Revoked **{count}** RFID card(s) for **{member.display_name}**.",
+            ephemeral=True,
+        )
+        logger.info(f"Admin {interaction.user.name} revoked {count} RFID card(s) for {target_username}")
+
+    @access_group.command(name="override", description="Set global access override (grant all / deny all / normal)")
+    @app_commands.describe(mode="Override mode")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="Grant All — unlock for everyone", value="GRANT_ALL"),
+        app_commands.Choice(name="Deny All — lock out non-admin cards", value="DENY_ALL"),
+        app_commands.Choice(name="Normal — reservation-based access", value="NORMAL"),
+    ])
+    @is_admin_check()
+    async def access_override(self, interaction: discord.Interaction, mode: str):
+        """Set a global access override read by the MQTT connector"""
+        from database import AccessOverrideModeEnum
+
+        try:
+            override_mode = AccessOverrideModeEnum(mode)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid mode.", ephemeral=True)
+            return
+
+        with get_db_session() as session:
+            from repositories import AccessOverrideRepository, AdminActionLogRepository
+            override_repo = AccessOverrideRepository(session)
+            override_repo.set_mode(
+                override_mode,
+                user_id=str(interaction.user.id),
+                username=interaction.user.name,
+            )
+
+            log_repo = AdminActionLogRepository(session)
+            log_repo.log_action(
+                admin_user_id=str(interaction.user.id),
+                admin_username=interaction.user.name,
+                action_type="access_override",
+                details=f"mode={mode}",
+            )
+            session.commit()
+
+        labels = {
+            "NORMAL": "🟢 **Normal** — reservation-based access control",
+            "GRANT_ALL": "🟡 **Grant All** — all cards will be granted access",
+            "DENY_ALL": "🔴 **Deny All** — all non-admin cards will be denied",
+        }
+        await interaction.response.send_message(
+            f"✅ Access override set to {labels.get(mode, mode)}",
+            ephemeral=True,
+        )
+        logger.info(f"Admin {interaction.user.name} set access override to {mode}")
+
+    @access_group.command(name="list", description="List all registered RFID cards")
+    @is_admin_check()
+    async def access_list(self, interaction: discord.Interaction):
+        """Show all registered RFID cards and the current override mode"""
+        with get_db_session() as session:
+            from repositories import RfidCardRepository, AccessOverrideRepository
+            card_repo = RfidCardRepository(session)
+            override_repo = AccessOverrideRepository(session)
+
+            cards = card_repo.get_all()
+            override = override_repo.get_current()
+
+        mode_labels = {
+            "NORMAL": "🟢 Normal",
+            "GRANT_ALL": "🟡 Grant All",
+            "DENY_ALL": "🔴 Deny All",
+        }
+        mode_str = mode_labels.get(override.mode.value, override.mode.value)
+
+        embed = discord.Embed(
+            title="🔑 RFID Access Cards",
+            description=f"**Override mode:** {mode_str} (set by {override.set_by_username})",
+            color=discord.Color.blue(),
+        )
+
+        if not cards:
+            embed.add_field(name="Cards", value="No cards registered.", inline=False)
+        else:
+            enabled = [c for c in cards if c.enabled]
+            disabled = [c for c in cards if not c.enabled]
+
+            if enabled:
+                lines = []
+                for c in enabled:
+                    admin_flag = " 🛡️" if c.is_admin else ""
+                    lines.append(f"`{c.card_id}` — **{c.username}**{admin_flag}")
+                embed.add_field(
+                    name=f"Enabled ({len(enabled)})",
+                    value="\n".join(lines) or "None",
+                    inline=False,
+                )
+
+            if disabled:
+                lines = [f"~~`{c.card_id}`~~ — {c.username}" for c in disabled]
+                embed.add_field(
+                    name=f"Disabled ({len(disabled)})",
+                    value="\n".join(lines) or "None",
+                    inline=False,
+                )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

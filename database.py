@@ -32,6 +32,13 @@ class PhotoDebtTypeEnum(enum.Enum):
     RETURN = "return"
 
 
+class AccessOverrideModeEnum(enum.Enum):
+    """Global access override mode"""
+    NORMAL = "NORMAL"
+    GRANT_ALL = "GRANT_ALL"
+    DENY_ALL = "DENY_ALL"
+
+
 class PhotoTypeEnum(enum.Enum):
     """Type of reservation photo"""
     START = "start"
@@ -572,3 +579,45 @@ class AdminActionLogModel(Base):
 
     def __repr__(self):
         return f"<AdminActionLog(admin={self.admin_username}, action={self.action_type}, target={self.target_username})>"
+
+
+class RfidCardModel(Base):
+    """RFID card mapping — links Wiegand 34-bit card IDs to Discord users"""
+    __tablename__ = "rfid_cards"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), nullable=False, index=True)   # Discord user ID
+    card_id = Column(String(20), unique=True, nullable=False)  # Wiegand decimal string
+    username = Column(String(100), nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)  # Admin cards bypass DENY_ALL override
+    enabled = Column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_rfid_cards_card_id', 'card_id'),
+        Index('idx_rfid_cards_user_id', 'user_id'),
+    )
+
+    def __repr__(self):
+        return f"<RfidCard(user={self.username}, card_id={self.card_id}, enabled={self.enabled})>"
+
+
+class AccessOverrideModel(Base):
+    """Global access override state read by the MQTT-DB connector"""
+    __tablename__ = "access_override"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    mode = Column(
+        SQLEnum(AccessOverrideModeEnum, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=AccessOverrideModeEnum.NORMAL,
+    )
+    set_by_user_id = Column(String(50), nullable=False)
+    set_by_username = Column(String(100), nullable=False)
+    set_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<AccessOverride(mode={self.mode.value}, set_by={self.set_by_username})>"

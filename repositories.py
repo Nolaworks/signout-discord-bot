@@ -1212,3 +1212,99 @@ class AdminActionLogRepository:
             .limit(limit)
             .all()
         )
+
+
+class RfidCardRepository:
+    """Repository for RFID card operations"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add_card(self, user_id: str, card_id: str, username: str,
+                 is_admin: bool = False) -> 'RfidCardModel':
+        """Register a new RFID card for a user"""
+        from database import RfidCardModel
+
+        card = RfidCardModel(
+            user_id=user_id,
+            card_id=card_id,
+            username=username,
+            is_admin=is_admin,
+            enabled=True,
+        )
+        self.session.add(card)
+        return card
+
+    def get_by_card_id(self, card_id: str) -> Optional['RfidCardModel']:
+        from database import RfidCardModel
+        return self.session.query(RfidCardModel).filter_by(card_id=card_id).first()
+
+    def get_by_user_id(self, user_id: str) -> List['RfidCardModel']:
+        from database import RfidCardModel
+        return self.session.query(RfidCardModel).filter_by(user_id=user_id).all()
+
+    def get_enabled_card_for_user(self, user_id: str) -> Optional['RfidCardModel']:
+        """Get a user's first enabled RFID card (if any)"""
+        from database import RfidCardModel
+        return self.session.query(RfidCardModel).filter_by(
+            user_id=user_id, enabled=True
+        ).first()
+
+    def get_all(self) -> List['RfidCardModel']:
+        from database import RfidCardModel
+        return self.session.query(RfidCardModel).order_by(RfidCardModel.username).all()
+
+    def revoke_card(self, card_id: str) -> bool:
+        """Disable a card by card_id. Returns True if found."""
+        card = self.get_by_card_id(card_id)
+        if not card:
+            return False
+        card.enabled = False
+        card.updated_at = datetime.utcnow()
+        return True
+
+    def revoke_all_for_user(self, user_id: str) -> int:
+        """Disable all cards for a user. Returns count disabled."""
+        cards = self.get_by_user_id(user_id)
+        count = 0
+        for card in cards:
+            if card.enabled:
+                card.enabled = False
+                card.updated_at = datetime.utcnow()
+                count += 1
+        return count
+
+    def card_id_exists(self, card_id: str) -> bool:
+        from database import RfidCardModel
+        return self.session.query(RfidCardModel).filter_by(card_id=card_id).first() is not None
+
+
+class AccessOverrideRepository:
+    """Repository for global access override state"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get_current(self) -> 'AccessOverrideModel':
+        """Get the current override row (there is always exactly one)"""
+        from database import AccessOverrideModel, AccessOverrideModeEnum
+        override = self.session.query(AccessOverrideModel).first()
+        if not override:
+            override = AccessOverrideModel(
+                mode=AccessOverrideModeEnum.NORMAL,
+                set_by_user_id='system',
+                set_by_username='system',
+            )
+            self.session.add(override)
+            self.session.flush()
+        return override
+
+    def set_mode(self, mode: 'AccessOverrideModeEnum',
+                 user_id: str, username: str) -> 'AccessOverrideModel':
+        """Update the global override mode"""
+        override = self.get_current()
+        override.mode = mode
+        override.set_by_user_id = user_id
+        override.set_by_username = username
+        override.set_at = datetime.utcnow()
+        return override

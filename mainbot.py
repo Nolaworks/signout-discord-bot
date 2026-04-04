@@ -200,10 +200,13 @@ async def notification_check_task():
             notified_debt_ids = photo_results.get('notified_debt_ids', [])
             blocked_count = await notification_manager.check_photo_debt_enforcement(session, skip_debt_ids=notified_debt_ids)
             
+            # Check for RFID access notifications (tool room)
+            access_count = await notification_manager.check_access_notifications(session)
+            
             session.commit()
             
             # Log if notifications were sent
-            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0)
+            total_notifications = upcoming_count + expiring_count + waitlist_count + photo_results.get('warnings_sent', 0) + access_count
             photo_actions = photo_results.get('reservations_cancelled', 0) + blocked_count
             
             if total_notifications > 0 or photo_actions > 0:
@@ -211,7 +214,8 @@ async def notification_check_task():
                     f"Notifications sent: {upcoming_count} reminders, {expiring_count} warnings, "
                     f"{waitlist_count} waitlist, {photo_results.get('warnings_sent', 0)} photo warnings, "
                     f"{photo_results.get('reservations_cancelled', 0)} cancelled for missing photos, "
-                    f"{blocked_count} users blocked for photo debts"
+                    f"{blocked_count} users blocked for photo debts, "
+                    f"{access_count} access notifications"
                 )
     except Exception as e:
         logger.error(f"Error in notification check task: {e}", exc_info=True)
@@ -1176,6 +1180,14 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
                 await interaction.response.send_message(error_msg, ephemeral=True)
                 logger.info(f"Consecutive signout limit blocked {username} from signing out {tool_name}")
                 return
+
+        # Check if Tool Room user has an RFID card (warn only, don't block)
+        no_rfid_card = False
+        if tool.is_tool_room:
+            from repositories import RfidCardRepository
+            rfid_repo = RfidCardRepository(session)
+            if not rfid_repo.get_enabled_card_for_user(user_id):
+                no_rfid_card = True
     
     # All validation passed - now we can defer for the longer GPT/database operations
     await interaction.response.defer(thinking=True)
@@ -1312,6 +1324,14 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
                 ephemeral=True
             )
             
+            # Warn if no RFID card registered
+            if no_rfid_card:
+                await interaction.followup.send(
+                    "⚠️ **No RFID card on file** — You don't have an RFID access card registered. "
+                    "Physical tool room access requires a card. Contact an admin to get one assigned.",
+                    ephemeral=True,
+                )
+            
             # Send detailed photo instructions DM (Task 1)
             if notification_manager:
                 await notification_manager.send_signout_photo_instructions(reservation, has_start_photo=False)
@@ -1376,6 +1396,14 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             embed.set_footer(text="Reply with the PSI number or use /psi in the tool channel")
             await send_dm(bot, user_id, embed=embed, log_context=f"welder PSI prompt for {tool_name}")
         
+        # Warn if no RFID card registered (tool room only)
+        if no_rfid_card:
+            await interaction.followup.send(
+                "⚠️ **No RFID card on file** — You don't have an RFID access card registered. "
+                "Physical tool room access requires a card. Contact an admin to get one assigned.",
+                ephemeral=True,
+            )
+
         logger.info(f"Created reservation: {username} - {tool_name} - {formatted_time}")
 
 

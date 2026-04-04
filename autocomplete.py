@@ -133,3 +133,19 @@ async def tool_autocomplete(interaction: Interaction, current: str) -> List[app_
         filtered = [t for t in tool_names if current.lower() in t.lower()]
         
         return [app_commands.Choice(name=t, value=t) for t in filtered][:25]
+
+
+async def rfid_user_autocomplete(interaction: Interaction, current: str) -> List[app_commands.Choice[str]]:
+    """
+    Autocomplete for users who have registered RFID cards.
+    Returns usernames that have at least one enabled RFID card.
+    """
+    with get_db_session() as session:
+        from repositories import RfidCardRepository
+        card_repo = RfidCardRepository(session)
+        cards = card_repo.get_all()
+
+        usernames = sorted({c.username for c in cards if c.enabled})
+        filtered = [u for u in usernames if current.lower() in u.lower()]
+
+        return [app_commands.Choice(name=u, value=u) for u in filtered][:25]
