@@ -1220,8 +1220,7 @@ class RfidCardRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def add_card(self, user_id: str, card_id: str, username: str,
-                 is_admin: bool = False) -> 'RfidCardModel':
+    def add_card(self, user_id: str, card_id: str, username: str) -> 'RfidCardModel':
         """Register a new RFID card for a user"""
         from database import RfidCardModel
 
@@ -1229,7 +1228,6 @@ class RfidCardRepository:
             user_id=user_id,
             card_id=card_id,
             username=username,
-            is_admin=is_admin,
             enabled=True,
         )
         self.session.add(card)

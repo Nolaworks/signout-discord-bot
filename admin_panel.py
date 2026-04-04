@@ -158,6 +158,12 @@ class AdminPanel(commands.Cog):
         description="Log management",
         parent=debug_group
     )
+    
+    debug_access_group = app_commands.Group(
+        name="access",
+        description="Access control logs",
+        parent=debug_group
+    )
 
     def cog_unload(self):
         """Cleanup on cog unload"""
@@ -2626,6 +2632,91 @@ class AdminPanel(commands.Cog):
         """Watch logs - nested grouped version"""
         await self.watch_logs(interaction, enable)
 
+    # ========== Debug Access Control Commands ==========
+
+    @debug_access_group.command(name="tail", description="Show recent access-control admin actions")
+    @app_commands.describe(
+        lines="Number of log entries (max 50)",
+        action="Filter by action type",
+    )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="All actions", value="all"),
+        app_commands.Choice(name="Card added", value="access_add"),
+        app_commands.Choice(name="Card revoked", value="access_revoke"),
+        app_commands.Choice(name="Override changed", value="access_override"),
+    ])
+    @is_developer_check()
+    async def debug_access_tail(self, interaction: discord.Interaction,
+                                lines: int = 20, action: str = "all"):
+        """Show recent access-control log entries from admin_action_log"""
+        if lines > 50:
+            lines = 50
+
+        with get_db_session() as session:
+            from database import AdminActionLogModel
+            query = session.query(AdminActionLogModel).filter(
+                AdminActionLogModel.action_type.like("access_%")
+            )
+            if action != "all":
+                query = query.filter(AdminActionLogModel.action_type == action)
+
+            entries = query.order_by(
+                AdminActionLogModel.created_at.desc()
+            ).limit(lines).all()
+
+        if not entries:
+            await interaction.response.send_message("No access-control log entries found.", ephemeral=True)
+            return
+
+        from time_utils import CENTRAL_TZ
+        import pytz
+
+        log_lines = []
+        for e in reversed(entries):
+            ts = e.created_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ).strftime("%m/%d %H:%M")
+            target = f" → {e.target_username}" if e.target_username else ""
+            detail = f" ({e.details})" if e.details else ""
+            log_lines.append(f"[{ts}] {e.admin_username}: {e.action_type}{target}{detail}")
+
+        text = "\n".join(log_lines)
+        if len(text) > 1800:
+            text = text[-1800:]
+
+        await interaction.response.send_message(f"```log\n{text}\n```", ephemeral=True)
+
+    @debug_access_group.command(name="status", description="Show current access override and card count")
+    @is_developer_check()
+    async def debug_access_status(self, interaction: discord.Interaction):
+        """Quick status view: override mode, card counts, recent activity"""
+        with get_db_session() as session:
+            from repositories import RfidCardRepository, AccessOverrideRepository
+            card_repo = RfidCardRepository(session)
+            override_repo = AccessOverrideRepository(session)
+
+            cards = card_repo.get_all()
+            override = override_repo.get_current()
+
+            enabled_count = sum(1 for c in cards if c.enabled)
+            disabled_count = sum(1 for c in cards if not c.enabled)
+
+        mode_labels = {
+            "NORMAL": "🟢 Normal",
+            "GRANT_ALL": "🟡 Grant All",
+            "DENY_ALL": "🔴 Deny All",
+        }
+        mode_str = mode_labels.get(override.mode.value, override.mode.value)
+
+        from time_utils import CENTRAL_TZ
+        import pytz
+        set_at = override.set_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ).strftime("%m/%d/%Y %I:%M %p CT")
+
+        await interaction.response.send_message(
+            f"**Access Control Status**\n"
+            f"Override: {mode_str} (by {override.set_by_username} at {set_at})\n"
+            f"Cards: {enabled_count} enabled, {disabled_count} disabled",
+            ephemeral=True,
+        )
+
     # ========== Error Handling ==========
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -3235,12 +3326,11 @@ class AdminPanel(commands.Cog):
     @app_commands.describe(
         user="Discord user to assign the card to",
         card_id="Wiegand 34-bit card number (decimal)",
-        admin_card="Mark card as admin (bypasses DENY_ALL override)"
     )
     @app_commands.autocomplete(user=admin_user_autocomplete)
     @is_admin_check()
     async def access_add(self, interaction: discord.Interaction, user: str,
-                         card_id: str, admin_card: bool = False):
+                         card_id: str):
         """Register an RFID card for a Discord user"""
         # Validate card_id: numeric, max 20 chars
         if not card_id.isdigit() or len(card_id) > 20:
@@ -3281,7 +3371,6 @@ class AdminPanel(commands.Cog):
                 user_id=target_user_id,
                 card_id=card_id,
                 username=target_username,
-                is_admin=admin_card,
             )
 
             log_repo = AdminActionLogRepository(session)
@@ -3291,13 +3380,12 @@ class AdminPanel(commands.Cog):
                 action_type="access_add",
                 target_user_id=target_user_id,
                 target_username=target_username,
-                details=f"card_id={card_id}, is_admin={admin_card}",
+                details=f"card_id={card_id}",
             )
             session.commit()
 
-        flag = " (admin)" if admin_card else ""
         await interaction.response.send_message(
-            f"✅ Registered RFID card `{card_id}` for **{member.display_name}**{flag}.",
+            f"✅ Registered RFID card `{card_id}` for **{member.display_name}**.",
             ephemeral=True,
         )
         logger.info(f"Admin {interaction.user.name} registered RFID card {card_id} for {target_username}")
@@ -3432,8 +3520,7 @@ class AdminPanel(commands.Cog):
             if enabled:
                 lines = []
                 for c in enabled:
-                    admin_flag = " 🛡️" if c.is_admin else ""
-                    lines.append(f"`{c.card_id}` — **{c.username}**{admin_flag}")
+                    lines.append(f"`{c.card_id}` — **{c.username}**")
                 embed.add_field(
                     name=f"Enabled ({len(enabled)})",
                     value="\n".join(lines) or "None",

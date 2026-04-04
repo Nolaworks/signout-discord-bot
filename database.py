@@ -589,7 +589,6 @@ class RfidCardModel(Base):
     user_id = Column(String(50), nullable=False, index=True)   # Discord user ID
     card_id = Column(String(20), unique=True, nullable=False)  # Wiegand decimal string
     username = Column(String(100), nullable=False)
-    is_admin = Column(Boolean, default=False, nullable=False)  # Admin cards bypass DENY_ALL override
     enabled = Column(Boolean, default=True, nullable=False)
 
     # Timestamps
