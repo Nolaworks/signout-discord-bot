@@ -32,7 +32,9 @@ from time_utils import (
 from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
     user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id,
-    validate_tool_channel, send_dm
+    validate_tool_channel, send_dm,
+    SHOP_LEADER_ROLE, user_has_shop_leader, user_is_shop_leader_or_admin,
+    is_shop_leader_or_admin_check,
 )
 from autocomplete import (
     user_autocomplete,
@@ -155,6 +157,12 @@ class AdminPanel(commands.Cog):
     access_group = app_commands.Group(
         name="access",
         description="RFID access card management",
+        parent=admin_group
+    )
+
+    shop_leader_group = app_commands.Group(
+        name="shop-leader",
+        description="Grant or revoke the Shop Leader limited-admin role",
         parent=admin_group
     )
     
@@ -2100,33 +2108,33 @@ class AdminPanel(commands.Cog):
     # ===== /admin role group commands =====
     
     @role_group.command(name="toggle", description="Toggle role requirement for current tool")
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def role_toggle(self, interaction: discord.Interaction):
         """Toggle role requirement - nested grouped version"""
         await self.togglerole(interaction)
     
     @role_group.command(name="assign", description="Give a user access to the current tool")
     @app_commands.describe(user="User to give tool access")
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def role_assign(self, interaction: discord.Interaction, user: discord.Member):
         """Assign role - nested grouped version"""
         await self.assignrole(interaction, user)
     
     @role_group.command(name="revoke", description="Remove a user's access to the current tool")
     @app_commands.describe(user="User to revoke tool access from")
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def role_revoke(self, interaction: discord.Interaction, user: discord.Member):
         """Revoke role - nested grouped version"""
         await self.revokerole(interaction, user)
     
     @role_group.command(name="sync", description="Sync all tool roles with the database")
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def role_sync(self, interaction: discord.Interaction):
         """Sync roles - nested grouped version"""
         await self.syncroles(interaction)
     
     @role_group.command(name="bulk", description="Assign the current tool's role to all server members")
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def role_bulk(self, interaction: discord.Interaction):
         """Bulk assign role to all members - nested grouped version"""
         await self.bulkassignrole(interaction)
@@ -3339,7 +3347,7 @@ class AdminPanel(commands.Cog):
         card_id="Wiegand 34-bit card number (decimal)",
     )
     @app_commands.autocomplete(user=admin_user_autocomplete)
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def access_add(self, interaction: discord.Interaction, user: str,
                          card_id: str):
         """Register an RFID card for a Discord user"""
@@ -3404,7 +3412,7 @@ class AdminPanel(commands.Cog):
     @access_group.command(name="revoke", description="Revoke RFID access for a user")
     @app_commands.describe(user="User whose card(s) to revoke")
     @app_commands.autocomplete(user=rfid_user_autocomplete)
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def access_revoke(self, interaction: discord.Interaction, user: str):
         """Disable all RFID cards for a user"""
         member = discord.utils.find(
@@ -3456,7 +3464,7 @@ class AdminPanel(commands.Cog):
         card_id="Specific RFID card number to remove",
     )
     @app_commands.autocomplete(user=rfid_user_autocomplete, card_id=rfid_card_autocomplete)
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def access_remove(self, interaction: discord.Interaction, user: str, card_id: str):
         """Delete one specific RFID card for a specific user"""
         member = discord.utils.find(
@@ -3517,7 +3525,7 @@ class AdminPanel(commands.Cog):
         timeout_seconds="How long to wait for a swipe (10-120 seconds)",
     )
     @app_commands.autocomplete(user=admin_user_autocomplete)
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def access_capture(self, interaction: discord.Interaction, user: str, timeout_seconds: int = 45):
         """Wait for the next RFID swipe event and assign that card to a user"""
         if timeout_seconds < 10:
@@ -3641,7 +3649,7 @@ class AdminPanel(commands.Cog):
         app_commands.Choice(name="Deny All — lock out non-admin cards", value="DENY_ALL"),
         app_commands.Choice(name="Normal — reservation-based access", value="NORMAL"),
     ])
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def access_override(self, interaction: discord.Interaction, mode: str):
         """Set a global access override read by the MQTT connector"""
         from database import AccessOverrideModeEnum
@@ -3682,7 +3690,7 @@ class AdminPanel(commands.Cog):
         logger.info(f"Admin {interaction.user.name} set access override to {mode}")
 
     @access_group.command(name="list", description="List all registered RFID cards")
-    @is_admin_check()
+    @is_shop_leader_or_admin_check()
     async def access_list(self, interaction: discord.Interaction):
         """Show all registered RFID cards and the current override mode"""
         with get_db_session() as session:
@@ -3739,6 +3747,238 @@ class AdminPanel(commands.Cog):
                 )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ========== Admin sync (Discord roles → users.is_admin) ==========
+
+    def _member_should_be_admin(self, member: discord.Member) -> bool:
+        """A member counts as 'admin' for RFID/connector purposes if they
+        are a full bot admin OR carry the Shop Leader role.
+        """
+        return user_is_admin(member) or user_has_shop_leader(member)
+
+    def _sync_member_admin_flag(self, member: discord.Member) -> bool:
+        """Update users.is_admin for a single member to match their Discord roles.
+
+        Returns True if the row was changed (or created).
+        """
+        try:
+            should_be_admin = self._member_should_be_admin(member)
+            with get_db_session() as session:
+                from repositories import UserRepository
+                user_repo = UserRepository(session)
+                user = user_repo.get_by_user_id(str(member.id))
+                if user is None:
+                    # Don't create rows for arbitrary members; only sync existing ones.
+                    return False
+                if user.is_admin == should_be_admin:
+                    return False
+                user.is_admin = should_be_admin
+                user.username = member.name
+                if member.display_name:
+                    user.display_name = member.display_name
+                session.commit()
+                logger.info(
+                    "Sync is_admin: %s (%s) -> %s",
+                    member.name, member.id, should_be_admin,
+                )
+                return True
+        except Exception:
+            logger.exception("Failed to sync is_admin for member %s", getattr(member, "id", "?"))
+            return False
+
+    async def _sync_all_admins(self) -> tuple[int, int]:
+        """Sync users.is_admin for every guild member that already exists in the DB.
+
+        Returns (changed, scanned).
+        """
+        scanned = 0
+        changed = 0
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.bot:
+                    continue
+                scanned += 1
+                if self._sync_member_admin_flag(member):
+                    changed += 1
+        logger.info("Admin sync complete: %d changed / %d scanned", changed, scanned)
+        return changed, scanned
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """On startup, reconcile users.is_admin with current Discord roles."""
+        try:
+            await self._sync_all_admins()
+        except Exception:
+            logger.exception("Startup admin sync failed")
+
+    async def cog_load(self):
+        """Schedule an admin sync shortly after the cog is loaded.
+
+        We can't rely on on_ready firing again because the cog is added
+        inside the bot's existing on_ready handler.
+        """
+        async def _deferred_sync():
+            try:
+                await self.bot.wait_until_ready()
+                await self._sync_all_admins()
+            except Exception:
+                logger.exception("Deferred startup admin sync failed")
+        asyncio.create_task(_deferred_sync())
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """Keep users.is_admin in sync when a member's roles change."""
+        try:
+            before_roles = {r.name for r in getattr(before, "roles", [])}
+            after_roles = {r.name for r in getattr(after, "roles", [])}
+            if before_roles == after_roles:
+                return
+            self._sync_member_admin_flag(after)
+        except Exception:
+            logger.exception("on_member_update admin sync failed for %s", getattr(after, "id", "?"))
+
+    @access_group.command(name="sync-admins", description="Re-sync users.is_admin from Discord roles")
+    @is_admin_check()
+    async def access_sync_admins(self, interaction: discord.Interaction):
+        """Force a full admin-flag re-sync against current Discord roles."""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        changed, scanned = await self._sync_all_admins()
+        await interaction.followup.send(
+            f"✅ Admin sync done — updated **{changed}** user(s), scanned **{scanned}**.",
+            ephemeral=True,
+        )
+
+    # ========== Shop Leader role management ==========
+
+    def _get_shop_leader_role(self, guild: discord.Guild) -> Optional[discord.Role]:
+        return discord.utils.get(guild.roles, name=SHOP_LEADER_ROLE)
+
+    @shop_leader_group.command(
+        name="grant",
+        description="Grant a user the Shop Leader role (limited admin: access + role commands)",
+    )
+    @app_commands.describe(user="User to promote to Shop Leader")
+    @is_admin_check()
+    async def shop_leader_grant(self, interaction: discord.Interaction, user: discord.Member):
+        """Add the Shop Leader role and mark the user as admin in the DB."""
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("❌ Run this in a server.", ephemeral=True)
+            return
+
+        role = self._get_shop_leader_role(guild)
+        if role is None:
+            try:
+                role = await guild.create_role(
+                    name=SHOP_LEADER_ROLE,
+                    reason=f"Auto-created by /admin shop-leader grant (by {interaction.user.name})",
+                    mentionable=False,
+                )
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    f"❌ I lack permission to create the **{SHOP_LEADER_ROLE}** role. "
+                    f"Create it manually and try again.",
+                    ephemeral=True,
+                )
+                return
+
+        if role in user.roles:
+            await interaction.response.send_message(
+                f"ℹ️ **{user.display_name}** already has the **{SHOP_LEADER_ROLE}** role.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await user.add_roles(role, reason=f"Shop Leader granted by {interaction.user.name}")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                f"❌ I lack permission to assign **{SHOP_LEADER_ROLE}** to that user. "
+                f"Make sure my role is above **{SHOP_LEADER_ROLE}** in the role hierarchy.",
+                ephemeral=True,
+            )
+            return
+
+        # Reflect in DB so the connector's admin bypass works immediately.
+        self._sync_member_admin_flag(user)
+
+        with get_db_session() as session:
+            from repositories import AdminActionLogRepository
+            log_repo = AdminActionLogRepository(session)
+            log_repo.log_action(
+                admin_user_id=str(interaction.user.id),
+                admin_username=interaction.user.name,
+                action_type="shop_leader_grant",
+                target_user_id=str(user.id),
+                target_username=user.name,
+                details=f"role={SHOP_LEADER_ROLE}",
+            )
+            session.commit()
+
+        await interaction.response.send_message(
+            f"✅ Granted **{SHOP_LEADER_ROLE}** to **{user.display_name}**. "
+            f"They can now use `/admin access` and `/admin role` commands.",
+            ephemeral=True,
+        )
+        logger.info(
+            "Admin %s granted Shop Leader to %s (%s)",
+            interaction.user.name, user.name, user.id,
+        )
+
+    @shop_leader_group.command(
+        name="revoke",
+        description="Revoke a user's Shop Leader role",
+    )
+    @app_commands.describe(user="User to demote from Shop Leader")
+    @is_admin_check()
+    async def shop_leader_revoke(self, interaction: discord.Interaction, user: discord.Member):
+        """Remove the Shop Leader role and re-sync admin flag."""
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("❌ Run this in a server.", ephemeral=True)
+            return
+
+        role = self._get_shop_leader_role(guild)
+        if role is None or role not in user.roles:
+            await interaction.response.send_message(
+                f"ℹ️ **{user.display_name}** does not have the **{SHOP_LEADER_ROLE}** role.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await user.remove_roles(role, reason=f"Shop Leader revoked by {interaction.user.name}")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                f"❌ I lack permission to remove **{SHOP_LEADER_ROLE}** from that user.",
+                ephemeral=True,
+            )
+            return
+
+        # Re-sync admin flag (will go back to False unless they have another admin role).
+        self._sync_member_admin_flag(user)
+
+        with get_db_session() as session:
+            from repositories import AdminActionLogRepository
+            log_repo = AdminActionLogRepository(session)
+            log_repo.log_action(
+                admin_user_id=str(interaction.user.id),
+                admin_username=interaction.user.name,
+                action_type="shop_leader_revoke",
+                target_user_id=str(user.id),
+                target_username=user.name,
+                details=f"role={SHOP_LEADER_ROLE}",
+            )
+            session.commit()
+
+        await interaction.response.send_message(
+            f"✅ Revoked **{SHOP_LEADER_ROLE}** from **{user.display_name}**.",
+            ephemeral=True,
+        )
+        logger.info(
+            "Admin %s revoked Shop Leader from %s (%s)",
+            interaction.user.name, user.name, user.id,
+        )
 
 
 async def setup(bot):

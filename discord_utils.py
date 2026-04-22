@@ -314,6 +314,34 @@ def user_is_developer(user) -> bool:
     return any(role.name in config.developer_roles for role in getattr(user, "roles", []))
 
 
+# Name of the limited-admin Discord role used to delegate access-control
+# and tool-role commands to non-admin staff.
+SHOP_LEADER_ROLE = "Shop Leader"
+
+
+def user_has_shop_leader(user) -> bool:
+    """Return True if the member has the Shop Leader role."""
+    return any(role.name == SHOP_LEADER_ROLE for role in getattr(user, "roles", []))
+
+
+def user_is_shop_leader_or_admin(user) -> bool:
+    """
+    Allow either a full admin or a Shop Leader.
+
+    Used to gate /admin access ... and /admin role ... commands.
+    """
+    return user_is_admin(user) or user_has_shop_leader(user)
+
+
+def is_shop_leader_or_admin_check():
+    """
+    Decorator: allow admins OR users with the Shop Leader role.
+    """
+    async def predicate(interaction: discord.Interaction) -> bool:
+        return user_is_shop_leader_or_admin(interaction.user)
+    return app_commands.check(predicate)
+
+
 def is_developer_check():
     """
     Decorator to check if user is a developer.
