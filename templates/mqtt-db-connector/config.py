@@ -15,6 +15,9 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "DATABASE_URL_REDACTED192.168.30.151:5432/signout_bot",
 )
+# Reservation timestamps in this bot DB are stored as timezone-naive local times.
+# Use the same timezone here when evaluating now() in SQL comparisons.
+DB_TIMEZONE = os.getenv("DB_TIMEZONE", "America/Chicago")
 
 # ── MQTT ──────────────────────────────────────────────────────────────────────
 MQTT_BROKER   = os.getenv("MQTT_BROKER", "localhost")

@@ -1261,6 +1261,14 @@ class RfidCardRepository:
         card.updated_at = datetime.utcnow()
         return True
 
+    def delete_card(self, card_id: str) -> bool:
+        """Delete a card by card_id. Returns True if found."""
+        card = self.get_by_card_id(card_id)
+        if not card:
+            return False
+        self.session.delete(card)
+        return True
+
     def revoke_all_for_user(self, user_id: str) -> int:
         """Disable all cards for a user. Returns count disabled."""
         cards = self.get_by_user_id(user_id)
@@ -1306,3 +1314,54 @@ class AccessOverrideRepository:
         override.set_by_username = username
         override.set_at = datetime.utcnow()
         return override
+
+
+class RfidScanEventRepository:
+    """Repository for RFID scan-event capture workflow"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create_event(self, card_id: str) -> 'RfidScanEventModel':
+        """Create a new scan event"""
+        from database import RfidScanEventModel
+
+        event = RfidScanEventModel(card_id=card_id)
+        self.session.add(event)
+        return event
+
+    def get_latest_event_id(self) -> int:
+        """Get latest scan event ID (0 if none)."""
+        from database import RfidScanEventModel
+
+        latest = self.session.query(RfidScanEventModel).order_by(RfidScanEventModel.id.desc()).first()
+        return latest.id if latest else 0
+
+    def get_next_unconsumed_after_id(self, min_id: int) -> Optional['RfidScanEventModel']:
+        """Get oldest unconsumed scan event after baseline ID"""
+        from database import RfidScanEventModel
+
+        return self.session.query(RfidScanEventModel).filter(
+            and_(
+                RfidScanEventModel.consumed == False,
+                RfidScanEventModel.id > min_id
+            )
+        ).order_by(RfidScanEventModel.id.asc()).first()
+
+    def consume_event(self, event_id: int, admin_user_id: str, admin_username: str,
+                      assigned_user_id: Optional[str] = None,
+                      assigned_username: Optional[str] = None) -> bool:
+        """Mark a scan event as consumed by admin capture"""
+        from database import RfidScanEventModel
+
+        event = self.session.query(RfidScanEventModel).filter_by(id=event_id).first()
+        if not event:
+            return False
+
+        event.consumed = True
+        event.consumed_at = datetime.utcnow()
+        event.consumed_by_admin_user_id = admin_user_id
+        event.consumed_by_admin_username = admin_username
+        event.assigned_user_id = assigned_user_id
+        event.assigned_username = assigned_username
+        return True

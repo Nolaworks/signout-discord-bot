@@ -9,6 +9,24 @@ from repositories import ToolRepository, ReservationRepository
 from discord_utils import extract_tool_from_channel, user_is_admin, get_user_id
 
 
+def _flatten_option_map(options: list[dict] | None) -> dict:
+    """Recursively flatten Discord app-command options into a single name->value map."""
+    option_map = {}
+    if not options:
+        return option_map
+
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        name = opt.get("name")
+        if "value" in opt:
+            option_map[name] = opt.get("value")
+        nested = opt.get("options")
+        if nested:
+            option_map.update(_flatten_option_map(nested))
+    return option_map
+
+
 async def user_autocomplete(interaction: Interaction, current: str) -> List[app_commands.Choice[str]]:
     """
     Autocomplete for usernames in the current tool's reservations.
@@ -53,8 +71,8 @@ async def reservation_autocomplete(interaction: Interaction, current: str) -> Li
         return []
     
     # Extract any passed options like "user"
-    options = interaction.data.get("options", [])
-    option_map = {opt["name"]: opt["value"] for opt in options}
+    options = interaction.data.get("options", []) if interaction.data else []
+    option_map = _flatten_option_map(options)
     
     # Determine target user
     if user_is_admin(interaction.user):
@@ -149,3 +167,24 @@ async def rfid_user_autocomplete(interaction: Interaction, current: str) -> List
         filtered = [u for u in usernames if current.lower() in u.lower()]
 
         return [app_commands.Choice(name=u, value=u) for u in filtered][:25]
+
+
+async def rfid_card_autocomplete(interaction: Interaction, current: str) -> List[app_commands.Choice[str]]:
+    """
+    Autocomplete for RFID card IDs.
+    If a user option is provided, only cards for that user are shown.
+    """
+    with get_db_session() as session:
+        from repositories import RfidCardRepository
+        card_repo = RfidCardRepository(session)
+        cards = [c for c in card_repo.get_all() if c.enabled]
+
+        # If the command includes a user option, filter cards by that username.
+        options = interaction.data.get("options", []) if interaction.data else []
+        option_map = _flatten_option_map(options)
+        target_user = option_map.get("user")
+        if target_user:
+            cards = [c for c in cards if c.username.lower() == str(target_user).lower()]
+
+        filtered_ids = [c.card_id for c in cards if current.lower() in c.card_id.lower()]
+        return [app_commands.Choice(name=card_id, value=card_id) for card_id in filtered_ids[:25]]

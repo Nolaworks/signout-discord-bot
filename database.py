@@ -620,3 +620,27 @@ class AccessOverrideModel(Base):
 
     def __repr__(self):
         return f"<AccessOverride(mode={self.mode.value}, set_by={self.set_by_username})>"
+
+
+class RfidScanEventModel(Base):
+    """RFID card scan events logged by the MQTT connector for admin capture workflows"""
+    __tablename__ = "rfid_scan_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    card_id = Column(String(20), nullable=False, index=True)
+    scanned_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    # Capture/assignment metadata
+    consumed = Column(Boolean, default=False, nullable=False, index=True)
+    consumed_at = Column(DateTime)
+    consumed_by_admin_user_id = Column(String(50))
+    consumed_by_admin_username = Column(String(100))
+    assigned_user_id = Column(String(50))
+    assigned_username = Column(String(100))
+
+    __table_args__ = (
+        Index('idx_rfid_scan_events_consumed_scanned', 'consumed', 'scanned_at'),
+    )
+
+    def __repr__(self):
+        return f"<RfidScanEvent(card_id={self.card_id}, consumed={self.consumed})>"

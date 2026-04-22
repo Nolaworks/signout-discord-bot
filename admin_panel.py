@@ -34,7 +34,13 @@ from discord_utils import (
     user_is_admin, is_admin_check, user_is_developer, is_developer_check, get_user_id,
     validate_tool_channel, send_dm
 )
-from autocomplete import user_autocomplete, reservation_autocomplete, admin_user_autocomplete, rfid_user_autocomplete
+from autocomplete import (
+    user_autocomplete,
+    reservation_autocomplete,
+    admin_user_autocomplete,
+    rfid_user_autocomplete,
+    rfid_card_autocomplete,
+)
 from validation import validate_max_time_hours
 from exceptions import InvalidToolChannelError
 
@@ -2642,6 +2648,8 @@ class AdminPanel(commands.Cog):
     @app_commands.choices(action=[
         app_commands.Choice(name="All actions", value="all"),
         app_commands.Choice(name="Card added", value="access_add"),
+        app_commands.Choice(name="Card removed", value="access_remove"),
+        app_commands.Choice(name="Card captured+assigned", value="access_capture_assign"),
         app_commands.Choice(name="Card revoked", value="access_revoke"),
         app_commands.Choice(name="Override changed", value="access_override"),
     ])
@@ -2698,21 +2706,24 @@ class AdminPanel(commands.Cog):
 
             enabled_count = sum(1 for c in cards if c.enabled)
             disabled_count = sum(1 for c in cards if not c.enabled)
+            override_mode = override.mode.value
+            override_username = override.set_by_username
+            override_set_at = override.set_at
 
         mode_labels = {
             "NORMAL": "🟢 Normal",
             "GRANT_ALL": "🟡 Grant All",
             "DENY_ALL": "🔴 Deny All",
         }
-        mode_str = mode_labels.get(override.mode.value, override.mode.value)
+        mode_str = mode_labels.get(override_mode, override_mode)
 
         from time_utils import CENTRAL_TZ
         import pytz
-        set_at = override.set_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ).strftime("%m/%d/%Y %I:%M %p CT")
+        set_at = override_set_at.replace(tzinfo=pytz.UTC).astimezone(CENTRAL_TZ).strftime("%m/%d/%Y %I:%M %p CT")
 
         await interaction.response.send_message(
             f"**Access Control Status**\n"
-            f"Override: {mode_str} (by {override.set_by_username} at {set_at})\n"
+            f"Override: {mode_str} (by {override_username} at {set_at})\n"
             f"Cards: {enabled_count} enabled, {disabled_count} disabled",
             ephemeral=True,
         )
@@ -3438,6 +3449,190 @@ class AdminPanel(commands.Cog):
             ephemeral=True,
         )
         logger.info(f"Admin {interaction.user.name} revoked {count} RFID card(s) for {target_username}")
+
+    @access_group.command(name="remove", description="Remove a specific RFID card number from a user")
+    @app_commands.describe(
+        user="User who owns the card",
+        card_id="Specific RFID card number to remove",
+    )
+    @app_commands.autocomplete(user=rfid_user_autocomplete, card_id=rfid_card_autocomplete)
+    @is_admin_check()
+    async def access_remove(self, interaction: discord.Interaction, user: str, card_id: str):
+        """Delete one specific RFID card for a specific user"""
+        member = discord.utils.find(
+            lambda m: m.name == user or m.display_name == user,
+            interaction.guild.members
+        )
+        if not member:
+            await interaction.response.send_message(
+                f"❌ Could not find member **{user}** in this server.",
+                ephemeral=True
+            )
+            return
+
+        target_user_id = str(member.id)
+        target_username = member.name
+
+        with get_db_session() as session:
+            from repositories import RfidCardRepository, AdminActionLogRepository
+            card_repo = RfidCardRepository(session)
+
+            card = card_repo.get_by_card_id(card_id)
+            if not card:
+                await interaction.response.send_message(
+                    f"❌ Card `{card_id}` was not found.",
+                    ephemeral=True,
+                )
+                return
+
+            if card.user_id != target_user_id:
+                await interaction.response.send_message(
+                    f"❌ Card `{card_id}` belongs to **{card.username}**, not **{member.display_name}**.",
+                    ephemeral=True,
+                )
+                return
+
+            card_repo.delete_card(card_id)
+
+            log_repo = AdminActionLogRepository(session)
+            log_repo.log_action(
+                admin_user_id=str(interaction.user.id),
+                admin_username=interaction.user.name,
+                action_type="access_remove",
+                target_user_id=target_user_id,
+                target_username=target_username,
+                details=f"card_id={card_id}",
+            )
+            session.commit()
+
+        await interaction.response.send_message(
+            f"✅ Deleted RFID card `{card_id}` from **{member.display_name}**.",
+            ephemeral=True,
+        )
+        logger.info(f"Admin {interaction.user.name} deleted RFID card {card_id} from {target_username}")
+
+    @access_group.command(name="capture", description="Capture the next swiped RFID card and assign it to a user")
+    @app_commands.describe(
+        user="User who should receive the next swiped card",
+        timeout_seconds="How long to wait for a swipe (10-120 seconds)",
+    )
+    @app_commands.autocomplete(user=admin_user_autocomplete)
+    @is_admin_check()
+    async def access_capture(self, interaction: discord.Interaction, user: str, timeout_seconds: int = 45):
+        """Wait for the next RFID swipe event and assign that card to a user"""
+        if timeout_seconds < 10:
+            timeout_seconds = 10
+        if timeout_seconds > 120:
+            timeout_seconds = 120
+
+        member = discord.utils.find(
+            lambda m: m.name == user or m.display_name == user,
+            interaction.guild.members
+        )
+        if not member:
+            await interaction.response.send_message(
+                f"❌ Could not find member **{user}** in this server.",
+                ephemeral=True
+            )
+            return
+
+        target_user_id = str(member.id)
+        target_username = member.name
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.followup.send(
+            f"📡 Waiting up to **{timeout_seconds}s** for the next RFID swipe...\n"
+            f"Target user: **{member.display_name}**",
+            ephemeral=True,
+        )
+
+        with get_db_session() as session:
+            from repositories import RfidScanEventRepository
+            scan_repo = RfidScanEventRepository(session)
+            baseline_event_id = scan_repo.get_latest_event_id()
+
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+
+        while asyncio.get_running_loop().time() < deadline:
+            with get_db_session() as session:
+                from repositories import RfidScanEventRepository, RfidCardRepository, AdminActionLogRepository
+                scan_repo = RfidScanEventRepository(session)
+                card_repo = RfidCardRepository(session)
+                log_repo = AdminActionLogRepository(session)
+
+                event = scan_repo.get_next_unconsumed_after_id(baseline_event_id)
+                if event:
+                    card_id = event.card_id
+
+                    existing = card_repo.get_by_card_id(card_id)
+                    if existing:
+                        if existing.user_id == target_user_id:
+                            scan_repo.consume_event(
+                                event.id,
+                                admin_user_id=str(interaction.user.id),
+                                admin_username=interaction.user.name,
+                                assigned_user_id=target_user_id,
+                                assigned_username=target_username,
+                            )
+                            log_repo.log_action(
+                                admin_user_id=str(interaction.user.id),
+                                admin_username=interaction.user.name,
+                                action_type="access_capture_assign",
+                                target_user_id=target_user_id,
+                                target_username=target_username,
+                                details=f"card_id={card_id} (already assigned)",
+                            )
+                            session.commit()
+                            await interaction.followup.send(
+                                f"ℹ️ Captured card `{card_id}` is already assigned to **{member.display_name}**.",
+                                ephemeral=True,
+                            )
+                            return
+
+                        await interaction.followup.send(
+                            f"❌ Captured card `{card_id}` is already assigned to **{existing.username}**. "
+                            f"Remove it first, then retry capture.",
+                            ephemeral=True,
+                        )
+                        return
+
+                    card_repo.add_card(
+                        user_id=target_user_id,
+                        card_id=card_id,
+                        username=target_username,
+                    )
+                    scan_repo.consume_event(
+                        event.id,
+                        admin_user_id=str(interaction.user.id),
+                        admin_username=interaction.user.name,
+                        assigned_user_id=target_user_id,
+                        assigned_username=target_username,
+                    )
+                    log_repo.log_action(
+                        admin_user_id=str(interaction.user.id),
+                        admin_username=interaction.user.name,
+                        action_type="access_capture_assign",
+                        target_user_id=target_user_id,
+                        target_username=target_username,
+                        details=f"card_id={card_id}",
+                    )
+                    session.commit()
+
+                    await interaction.followup.send(
+                        f"✅ Captured and assigned card `{card_id}` to **{member.display_name}**.",
+                        ephemeral=True,
+                    )
+                    logger.info(
+                        f"Admin {interaction.user.name} captured card {card_id} and assigned to {target_username}"
+                    )
+                    return
+
+            await asyncio.sleep(1.0)
+
+        await interaction.followup.send(
+            "⏱️ Timed out waiting for a card swipe. Try `/admin access capture` again.",
+            ephemeral=True,
+        )
 
     @access_group.command(name="override", description="Set global access override (grant all / deny all / normal)")
     @app_commands.describe(mode="Override mode")
