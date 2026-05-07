@@ -18,7 +18,8 @@ from discord_utils import (
     extract_tool_from_channel, get_tool_from_channel_or_error,
     user_is_admin, user_is_developer, get_user_display_name, get_user_id,
     validate_photo_requirement, get_photo_url, is_tool_room_channel,
-    send_dm, send_admin_channel_message, requires_tool_channel, validate_tool_channel
+    send_dm, send_admin_channel_message, requires_tool_channel, validate_tool_channel,
+    should_ignore_channel_for_commands
 )
 from validation import validate_time_input, validate_comment
 from exceptions import InvalidToolChannelError, ReservationConflictError
@@ -229,6 +230,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             f"This command is on cooldown. Try again in {error.retry_after:.1f} seconds.",
             ephemeral=True
         )
+    elif isinstance(error, app_commands.CheckFailure):
+        # Channel-gate and other checks may intentionally stop command execution.
+        return
     elif isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message(
             "You don't have permission to use this command.",
@@ -241,6 +245,19 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
                 f"An error occurred: {error}",
                 ephemeral=True
             )
+
+
+@bot.tree.interaction_check
+async def global_command_channel_check(interaction: discord.Interaction) -> bool:
+    """Block slash commands in Archived or private channels."""
+    if should_ignore_channel_for_commands(interaction.channel):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "Commands are disabled in Archived or private channels.",
+                ephemeral=True
+            )
+        return False
+    return True
 
 
 @bot.event
@@ -259,6 +276,10 @@ async def on_message(message):
         # Check for PSI text input (welder gas reading)
         if message.content and message.content.strip():
             await handle_dm_psi_input(message)
+        return
+
+    # Ignore bot checks in Archived/private guild channels
+    if should_ignore_channel_for_commands(message.channel):
         return
     
     # Handle signout channel restrictions
@@ -1089,7 +1110,8 @@ async def open_table(interaction: discord.Interaction):
         [
             channel for channel in guild.text_channels
             if isinstance(getattr(channel, "name", None), str)
-            and channel.name.startswith("signout-table")
+            and channel.name.startswith("signout-table-")
+            and channel.name.removeprefix("signout-table-").isdigit()
         ],
         key=lambda c: c.name
     )
@@ -1105,21 +1127,29 @@ async def open_table(interaction: discord.Interaction):
 
     now_naive = get_now(CENTRAL_TZ).replace(tzinfo=None)
 
+    occupied_now = {}
     with get_db_session() as session:
         res_repo = ReservationRepository(session)
         active = res_repo.get_active_reservations()
 
-    occupied_now = {}
-    for reservation in active:
-        if reservation.tool_name not in table_tools:
-            continue
-        if reservation.start_time <= now_naive < reservation.end_time:
-            existing = occupied_now.get(reservation.tool_name)
-            if existing is None or reservation.end_time < existing.end_time:
-                occupied_now[reservation.tool_name] = reservation
+        for reservation in active:
+            tool_name = reservation.tool_name
+            end_time = reservation.end_time
+            start_time = reservation.start_time
+
+            if tool_name not in table_tools:
+                continue
+            if start_time <= now_naive < end_time:
+                existing = occupied_now.get(tool_name)
+                if existing is None or end_time < existing["end_time"]:
+                    occupied_now[tool_name] = {
+                        "tool_name": tool_name,
+                        "username": reservation.username,
+                        "end_time": end_time,
+                    }
 
     available_tools = [tool for tool in table_tools if tool not in occupied_now]
-    next_opening = min(occupied_now.values(), key=lambda reservation: reservation.end_time) if occupied_now else None
+    next_opening = min(occupied_now.values(), key=lambda reservation: reservation["end_time"]) if occupied_now else None
 
     embed = discord.Embed(
         title="🪑 Open Signout Tables",
@@ -1134,12 +1164,12 @@ async def open_table(interaction: discord.Interaction):
     )
 
     if next_opening:
-        end_aware = to_aware(next_opening.end_time, CENTRAL_TZ)
+        end_aware = to_aware(next_opening["end_time"], CENTRAL_TZ)
         end_ts = int(end_aware.timestamp())
         embed.add_field(
             name="Next To Open",
             value=(
-                f"**{next_opening.tool_name}** (currently reserved by **{next_opening.username}**)\n"
+                f"**{next_opening['tool_name']}** (currently reserved by **{next_opening['username']}**)\n"
                 f"Opens at <t:{end_ts}:t> (<t:{end_ts}:R>)"
             ),
             inline=False
@@ -1151,7 +1181,7 @@ async def open_table(interaction: discord.Interaction):
             inline=False
         )
 
-    embed.set_footer(text="Only channels named signout-table* are included.")
+    embed.set_footer(text="Only channels named signout-table-<number> are included.")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 

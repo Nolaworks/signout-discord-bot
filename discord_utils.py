@@ -263,6 +263,61 @@ def is_tool_room_channel(channel) -> bool:
         return False
 
 
+def is_archived_category_channel(channel) -> bool:
+    """
+    Check whether a channel is under the Archived category.
+
+    Args:
+        channel: Discord channel object
+
+    Returns:
+        True if category name contains "archived" (case-insensitive)
+    """
+    try:
+        category = getattr(channel, "category", None)
+        category_name = getattr(category, "name", None)
+        normalized = category_name.strip().lower() if category_name else ""
+        return "archived" in normalized
+    except Exception:
+        return False
+
+
+def is_private_guild_channel(channel) -> bool:
+    """
+    Check whether a guild channel is private to @everyone.
+
+    Args:
+        channel: Discord channel object
+
+    Returns:
+        True if @everyone cannot view the channel
+    """
+    try:
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return False
+
+        default_role = getattr(guild, "default_role", None)
+        if default_role is None:
+            return False
+
+        perms = channel.permissions_for(default_role)
+        return not perms.view_channel
+    except Exception:
+        return False
+
+
+def should_ignore_channel_for_commands(channel) -> bool:
+    """
+    Return True when slash commands should be ignored in this channel.
+
+    Rules:
+    - Ignore channels in category "Archived"
+    - Ignore private guild channels
+    """
+    return is_archived_category_channel(channel) or is_private_guild_channel(channel)
+
+
 def user_is_admin(user) -> bool:
     """
     Check if user has admin permissions.
