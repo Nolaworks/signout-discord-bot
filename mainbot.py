@@ -967,6 +967,15 @@ async def help_cmd(interaction: discord.Interaction):
         value="View all active reservations for the tool in this channel, including who has it and when.",
         inline=False
     )
+
+    embed.add_field(
+        name="🪑 `/opentable`",
+        value=(
+            "Show all currently open `signout-table*` channels and the next table to open "
+            "based on the soonest active reservation ending."
+        ),
+        inline=False
+    )
     
     return_photo_note = (
         "\n📸 Tool Room tools require a return photo — you'll get a DM with a 30-minute deadline."
@@ -1062,6 +1071,88 @@ async def help_cmd(interaction: discord.Interaction):
     
     embed.set_footer(text="Need more help? Contact an admin!")
     
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="opentable", description="Show available signout tables and next opening")
+async def open_table(interaction: discord.Interaction):
+    """Show currently available signout tables and the next table to become available."""
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message(
+            "This command can only be used in a server.",
+            ephemeral=True
+        )
+        return
+
+    table_channels = sorted(
+        [
+            channel for channel in guild.text_channels
+            if isinstance(getattr(channel, "name", None), str)
+            and channel.name.startswith("signout-table")
+        ],
+        key=lambda c: c.name
+    )
+    table_tools = [extract_tool_from_channel(channel) for channel in table_channels]
+    table_tools = [tool for tool in table_tools if tool]
+
+    if not table_tools:
+        await interaction.response.send_message(
+            "No `signout-table*` channels were found in this server.",
+            ephemeral=True
+        )
+        return
+
+    now_naive = get_now(CENTRAL_TZ).replace(tzinfo=None)
+
+    with get_db_session() as session:
+        res_repo = ReservationRepository(session)
+        active = res_repo.get_active_reservations()
+
+    occupied_now = {}
+    for reservation in active:
+        if reservation.tool_name not in table_tools:
+            continue
+        if reservation.start_time <= now_naive < reservation.end_time:
+            existing = occupied_now.get(reservation.tool_name)
+            if existing is None or reservation.end_time < existing.end_time:
+                occupied_now[reservation.tool_name] = reservation
+
+    available_tools = [tool for tool in table_tools if tool not in occupied_now]
+    next_opening = min(occupied_now.values(), key=lambda reservation: reservation.end_time) if occupied_now else None
+
+    embed = discord.Embed(
+        title="🪑 Open Signout Tables",
+        color=discord.Color.green() if available_tools else discord.Color.orange()
+    )
+
+    available_lines = [f"• `{tool}`" for tool in available_tools]
+    embed.add_field(
+        name=f"Available Now ({len(available_tools)}/{len(table_tools)})",
+        value="\n".join(available_lines) if available_lines else "No tables are currently open.",
+        inline=False
+    )
+
+    if next_opening:
+        end_aware = to_aware(next_opening.end_time, CENTRAL_TZ)
+        end_ts = int(end_aware.timestamp())
+        embed.add_field(
+            name="Next To Open",
+            value=(
+                f"**{next_opening.tool_name}** (currently reserved by **{next_opening.username}**)\n"
+                f"Opens at <t:{end_ts}:t> (<t:{end_ts}:R>)"
+            ),
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="Next To Open",
+            value="All signout tables are open right now.",
+            inline=False
+        )
+
+    embed.set_footer(text="Only channels named signout-table* are included.")
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
