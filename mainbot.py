@@ -5,6 +5,7 @@ import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone, timedelta
+from collections import defaultdict
 from discord import app_commands
 from discord.ext import commands, tasks
 
@@ -53,6 +54,140 @@ bot = commands.Bot(command_prefix=config.command_prefix, intents=intents)
 
 # Initialize notification manager (will be set after bot is ready)
 notification_manager = None
+_commands_synced = False
+
+
+class DiscordApiMonitor:
+    """Tracks Discord REST API call volume, latency, and rate-limit events."""
+
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._calls = 0
+        self._errors = 0
+        self._rate_limits = 0
+        self._total_ms = 0.0
+        self._max_ms = 0.0
+        self._by_route = defaultdict(int)
+        self._rate_limit_by_route = defaultdict(int)
+
+    async def record_success(self, route_key: str, latency_ms: float):
+        async with self._lock:
+            self._calls += 1
+            self._total_ms += latency_ms
+            self._max_ms = max(self._max_ms, latency_ms)
+            self._by_route[route_key] += 1
+
+    async def record_error(self, route_key: str, latency_ms: float, status_code: int | None):
+        async with self._lock:
+            self._calls += 1
+            self._errors += 1
+            self._total_ms += latency_ms
+            self._max_ms = max(self._max_ms, latency_ms)
+            self._by_route[route_key] += 1
+            if status_code == 429:
+                self._rate_limits += 1
+                self._rate_limit_by_route[route_key] += 1
+
+    async def snapshot_and_reset(self) -> dict:
+        async with self._lock:
+            snapshot = {
+                "calls": self._calls,
+                "errors": self._errors,
+                "rate_limits": self._rate_limits,
+                "total_ms": self._total_ms,
+                "max_ms": self._max_ms,
+                "by_route": dict(self._by_route),
+                "rate_limit_by_route": dict(self._rate_limit_by_route),
+            }
+            self._calls = 0
+            self._errors = 0
+            self._rate_limits = 0
+            self._total_ms = 0.0
+            self._max_ms = 0.0
+            self._by_route.clear()
+            self._rate_limit_by_route.clear()
+            return snapshot
+
+    async def snapshot(self) -> dict:
+        """Return a snapshot without clearing counters."""
+        async with self._lock:
+            return {
+                "calls": self._calls,
+                "errors": self._errors,
+                "rate_limits": self._rate_limits,
+                "total_ms": self._total_ms,
+                "max_ms": self._max_ms,
+                "by_route": dict(self._by_route),
+                "rate_limit_by_route": dict(self._rate_limit_by_route),
+            }
+
+
+api_monitor = DiscordApiMonitor()
+bot.api_monitor = api_monitor
+_chat_warning_last_sent: dict[tuple[int, int], float] = {}
+_last_api_log_snapshot = {
+    "calls": 0,
+    "errors": 0,
+    "rate_limits": 0,
+    "total_ms": 0.0,
+    "max_ms": 0.0,
+    "by_route": {},
+    "rate_limit_by_route": {},
+}
+
+
+def _dict_delta(current: dict, previous: dict) -> dict:
+    delta = {}
+    for key, value in current.items():
+        prev = previous.get(key, 0)
+        diff = value - prev
+        if diff > 0:
+            delta[key] = diff
+    return delta
+
+
+def install_discord_http_logging():
+    """Wrap discord.py HTTP request method for API and 429 observability."""
+    if getattr(bot.http, "_request_wrapped", False):
+        return
+
+    original_request = bot.http.request
+
+    async def wrapped_request(route, **kwargs):
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        method = getattr(route, "method", "?")
+        path = getattr(route, "path", str(route))
+        route_key = f"{method} {path}"
+
+        try:
+            result = await original_request(route, **kwargs)
+            latency_ms = (loop.time() - start) * 1000
+            await api_monitor.record_success(route_key, latency_ms)
+            if config.log_all_discord_api_calls:
+                logger.info("Discord API OK: %s in %.1fms", route_key, latency_ms)
+            return result
+        except Exception as e:
+            latency_ms = (loop.time() - start) * 1000
+            status_code = getattr(e, "status", None)
+            retry_after = getattr(e, "retry_after", None)
+            await api_monitor.record_error(route_key, latency_ms, status_code)
+
+            if status_code == 429:
+                logger.warning(
+                    "Discord API 429: %s retry_after=%s latency=%.1fms error=%s",
+                    route_key, retry_after, latency_ms, e
+                )
+            else:
+                logger.warning(
+                    "Discord API error: %s status=%s latency=%.1fms error=%s",
+                    route_key, status_code, latency_ms, e
+                )
+            raise
+
+    bot.http.request = wrapped_request
+    bot.http._request_wrapped = True
+    logger.info("Installed Discord HTTP API monitor")
 
 
 @tasks.loop(minutes=config.cleanup_interval_minutes)
@@ -222,6 +357,57 @@ async def notification_check_task():
         logger.error(f"Error in notification check task: {e}", exc_info=True)
 
 
+@tasks.loop(minutes=1)
+async def api_metrics_task():
+    """Periodic summary of Discord API call volume and rate limits."""
+    global _last_api_log_snapshot
+
+    snapshot = await api_monitor.snapshot()
+
+    if snapshot["calls"] < _last_api_log_snapshot["calls"]:
+        # Counters were reset via /debug api-metrics reset:true.
+        _last_api_log_snapshot = snapshot
+        return
+
+    call_count = snapshot["calls"] - _last_api_log_snapshot["calls"]
+    if call_count <= 0:
+        return
+
+    error_count = max(0, snapshot["errors"] - _last_api_log_snapshot["errors"])
+    rl_count = max(0, snapshot["rate_limits"] - _last_api_log_snapshot["rate_limits"])
+    total_ms_delta = max(0.0, snapshot["total_ms"] - _last_api_log_snapshot["total_ms"])
+    avg_ms = total_ms_delta / call_count
+
+    route_delta = _dict_delta(snapshot["by_route"], _last_api_log_snapshot["by_route"])
+    top_routes = sorted(route_delta.items(), key=lambda item: item[1], reverse=True)[:5]
+    top_route_text = ", ".join([f"{route}={count}" for route, count in top_routes]) if top_routes else "none"
+
+    logger.info(
+        "Discord API summary (1m): calls=%d errors=%d 429s=%d avg=%.1fms max=%.1fms top=[%s]",
+        call_count,
+        error_count,
+        rl_count,
+        avg_ms,
+        snapshot["max_ms"],
+        top_route_text,
+    )
+
+    if rl_count:
+        rl_route_delta = _dict_delta(
+            snapshot["rate_limit_by_route"],
+            _last_api_log_snapshot["rate_limit_by_route"],
+        )
+        rl_routes = sorted(
+            rl_route_delta.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        rl_route_text = ", ".join([f"{route}={count}" for route, count in rl_routes])
+        logger.warning("Discord API rate-limited routes (1m): %s", rl_route_text)
+
+    _last_api_log_snapshot = snapshot
+
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     """Handle application command errors"""
@@ -288,13 +474,22 @@ async def on_message(message):
     
     if not config.allow_general_chat_in_signout_channels:
         if message.channel.name.startswith("signout-") and not message.content.startswith("/"):
-            await message.channel.send(
-                f"{message.author.mention}, To help everyone get used to the new setup, "
-                "only slash commands are allowed for now. Try /signout.",
-                delete_after=10
-            )
+            key = (message.channel.id, message.author.id)
+            now_tick = asyncio.get_running_loop().time()
+            cooldown = max(0, config.signout_warning_cooldown_seconds)
+            last_sent = _chat_warning_last_sent.get(key, 0.0)
+            if now_tick - last_sent >= cooldown:
+                await message.channel.send(
+                    f"{message.author.mention}, To help everyone get used to the new setup, "
+                    "only slash commands are allowed for now. Try /signout.",
+                    delete_after=10
+                )
+                _chat_warning_last_sent[key] = now_tick
             await asyncio.sleep(5)
-            await message.delete()
+            try:
+                await message.delete()
+            except discord.NotFound:
+                pass
 
 
 async def handle_dm_photo_upload(message: discord.Message):
@@ -1096,6 +1291,7 @@ async def help_cmd(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="opentable", description="Show available signout tables and next opening")
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
 async def open_table(interaction: discord.Interaction):
     """Show currently available signout tables and the next table to become available."""
     guild = interaction.guild
@@ -2029,7 +2225,7 @@ async def on_guild_channel_create(channel):
 @bot.event
 async def on_ready():
     """Bot startup event"""
-    global notification_manager
+    global notification_manager, _commands_synced
     
     try:
         logger.info("Initializing database...")
@@ -2038,21 +2234,26 @@ async def on_ready():
         logger.info("Initializing notification manager...")
         notification_manager = NotificationManager(bot)
         bot.notification_manager = notification_manager  # Make accessible to cogs
+
+        install_discord_http_logging()
         
         logger.info("Loading admin panel...")
         await bot.add_cog(AdminPanel(bot))
         
-        logger.info("Syncing command tree...")
-        # Sync globally
-        await bot.tree.sync()
-        
-        # Also sync to each guild for immediate updates
-        for guild in bot.guilds:
-            try:
-                await bot.tree.sync(guild=guild)
-                logger.info(f"Synced commands to guild: {guild.name} ({guild.id})")
-            except Exception as e:
-                logger.error(f"Failed to sync to guild {guild.name}: {e}")
+        if config.sync_commands_on_ready and not _commands_synced:
+            logger.info("Syncing command tree globally (startup one-time)...")
+            await bot.tree.sync()
+            _commands_synced = True
+
+            if config.sync_commands_per_guild_on_ready:
+                for guild in bot.guilds:
+                    try:
+                        await bot.tree.sync(guild=guild)
+                        logger.info(f"Synced commands to guild: {guild.name} ({guild.id})")
+                    except Exception as e:
+                        logger.error(f"Failed to sync to guild {guild.name}: {e}")
+        else:
+            logger.info("Skipping command sync (already synced once or disabled)")
         
         logger.info(f"Commands synced: {len(bot.tree.get_commands())} commands available.")
         
@@ -2063,6 +2264,10 @@ async def on_ready():
         if not notification_check_task.is_running():
             logger.info("Starting notification task...")
             notification_check_task.start()
+
+        if not api_metrics_task.is_running():
+            logger.info("Starting Discord API metrics task...")
+            api_metrics_task.start()
         
         logger.info(f"Bot ready! Logged in as {bot.user}")
         logger.info(f"Connected to {len(bot.guilds)} guild(s)")

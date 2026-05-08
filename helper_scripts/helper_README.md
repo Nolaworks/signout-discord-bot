@@ -101,6 +101,44 @@ Create backup of PostgreSQL database.
 
 ---
 
+## Access Fallback Connector
+
+### `../scripts/fallback_access_connector.py`
+
+Standalone fallback daemon for RFID tool-room access checks when the main bot service is down.
+
+**What it does:**
+1. Subscribes to MQTT card-scan topic (`access/room/toolroom/card`)
+2. Checks `systemctl is-active test-signout` (configurable)
+3. If primary bot is healthy: stays passive (does not publish a response)
+4. If primary bot is unhealthy: queries PostgreSQL directly and publishes `GRANTED`/`DENIED`
+
+**Enable as a service:**
+```bash
+sudo cp systemd/test-signout-access-fallback.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now test-signout-access-fallback
+```
+
+**Check logs:**
+```bash
+journalctl -u test-signout-access-fallback -f
+```
+
+**Key `.env` variables (optional):**
+- `PRIMARY_BOT_SERVICE` (default: `test-signout`)
+- `PRIMARY_HEALTH_CHECK_INTERVAL_SECONDS` (default: `5`)
+- `FAIL_OPEN_ON_SERVICE_CHECK_ERROR` (default: `false`)
+- `PRIMARY_HEARTBEAT_FILE` + `PRIMARY_HEARTBEAT_MAX_AGE_SECONDS`
+- `PRIMARY_LOG_FILE` + `PRIMARY_LOG_MAX_AGE_SECONDS`
+
+Uses existing variables for DB/MQTT:
+- `DATABASE_URL`, `DB_TIMEZONE`
+- `MQTT_BROKER`, `MQTT_PORT`, `MQTT_USER`, `MQTT_PASSWORD`
+- `TOPIC_CARD`, `TOPIC_RESPONSE`
+
+---
+
 ## Quick Reference
 
 ### Fresh Installation

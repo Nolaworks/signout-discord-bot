@@ -46,6 +46,19 @@ class BotConfig:
     # Cleanup settings
     cleanup_interval_minutes: int = 1
 
+    # Command sync behavior
+    sync_commands_on_ready: bool = True
+    sync_commands_per_guild_on_ready: bool = False
+
+    # Channel enforcement behavior
+    signout_warning_cooldown_seconds: int = 30
+
+    # Discord API observability
+    log_all_discord_api_calls: bool = False
+
+    # Notification pacing (helps avoid API bursts)
+    notification_send_spacing_ms: int = 150
+
     # Timezone
     timezone: str = "America/Chicago"
 
@@ -87,6 +100,11 @@ def load_config() -> BotConfig:
         database_echo=os.getenv("DATABASE_ECHO", "false").lower() == "true",
         default_max_time_hours=int(os.getenv("DEFAULT_MAX_TIME_HOURS", "168")),
         cleanup_interval_minutes=int(os.getenv("CLEANUP_INTERVAL_MINUTES", "1")),
+        sync_commands_on_ready=os.getenv("SYNC_COMMANDS_ON_READY", "true").lower() == "true",
+        sync_commands_per_guild_on_ready=os.getenv("SYNC_COMMANDS_PER_GUILD_ON_READY", "false").lower() == "true",
+        signout_warning_cooldown_seconds=int(os.getenv("SIGNOUT_WARNING_COOLDOWN_SECONDS", "30")),
+        log_all_discord_api_calls=os.getenv("LOG_ALL_DISCORD_API_CALLS", "false").lower() == "true",
+        notification_send_spacing_ms=int(os.getenv("NOTIFICATION_SEND_SPACING_MS", "150")),
         timezone=os.getenv("TIMEZONE", "America/Chicago"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_file=os.getenv("LOG_FILE", "bot.log"),

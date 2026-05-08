@@ -2,6 +2,7 @@
 Discord-specific utility functions.
 """
 import discord
+import asyncio
 from discord import Interaction, app_commands
 from typing import Optional, List, Union
 from dataclasses import dataclass
@@ -12,6 +13,29 @@ from exceptions import InvalidToolChannelError
 from config import get_config
 
 logger = logging.getLogger(__name__)
+
+_USER_CACHE: dict[int, discord.User] = {}
+_SEND_PACE_LOCK = asyncio.Lock()
+_LAST_SEND_TS = 0.0
+
+
+async def _apply_outbound_send_pacing():
+    """Pace outbound sends to avoid API bursts during notification spikes."""
+    global _LAST_SEND_TS
+
+    min_gap_ms = max(0, get_config().notification_send_spacing_ms)
+    if min_gap_ms == 0:
+        return
+
+    min_gap_seconds = min_gap_ms / 1000.0
+    loop = asyncio.get_running_loop()
+
+    async with _SEND_PACE_LOCK:
+        now = loop.time()
+        wait_for = min_gap_seconds - (now - _LAST_SEND_TS)
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        _LAST_SEND_TS = loop.time()
 
 
 # ========== DM Sending Utilities ==========
@@ -55,7 +79,13 @@ async def send_dm(
     context = log_context or "message"
     
     try:
-        user = await bot.fetch_user(int(user_id))
+        uid = int(user_id)
+        user = bot.get_user(uid) or _USER_CACHE.get(uid)
+        if user is None:
+            user = await bot.fetch_user(uid)
+            _USER_CACHE[uid] = user
+
+        await _apply_outbound_send_pacing()
         
         if content and embed:
             await user.send(content=content, embed=embed)
@@ -109,6 +139,8 @@ async def send_admin_channel_message(
         if not channel:
             logger.warning(f"Admin channel {config.admin_channel_id} not found")
             return False
+
+        await _apply_outbound_send_pacing()
         
         if content and embed:
             await channel.send(content=content, embed=embed)

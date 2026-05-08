@@ -2453,6 +2453,56 @@ class AdminPanel(commands.Cog):
             batch_size += embed_size
         if batch:
             await interaction.followup.send(embeds=batch, ephemeral=True)
+
+    @debug_group.command(name="api-metrics", description="View Discord API call and rate-limit metrics")
+    @app_commands.describe(reset="Reset counters after displaying metrics")
+    @is_admin_check()
+    async def debug_api_metrics(self, interaction: discord.Interaction, reset: bool = False):
+        """Display Discord API monitor stats gathered since the last reset."""
+        monitor = getattr(self.bot, "api_monitor", None)
+        if monitor is None:
+            await interaction.response.send_message(
+                "API monitor is not available on this bot instance.",
+                ephemeral=True,
+            )
+            return
+
+        if reset:
+            snapshot = await monitor.snapshot_and_reset()
+        else:
+            snapshot = await monitor.snapshot()
+
+        calls = snapshot.get("calls", 0)
+        errors = snapshot.get("errors", 0)
+        rate_limits = snapshot.get("rate_limits", 0)
+        total_ms = snapshot.get("total_ms", 0.0)
+        max_ms = snapshot.get("max_ms", 0.0)
+        avg_ms = (total_ms / calls) if calls else 0.0
+
+        top_routes = sorted(snapshot.get("by_route", {}).items(), key=lambda item: item[1], reverse=True)[:5]
+        top_routes_text = "\n".join([f"{route} -> {count}" for route, count in top_routes]) if top_routes else "No routes recorded yet."
+
+        rl_routes = sorted(snapshot.get("rate_limit_by_route", {}).items(), key=lambda item: item[1], reverse=True)[:5]
+        rl_routes_text = "\n".join([f"{route} -> {count}" for route, count in rl_routes]) if rl_routes else "No 429 routes recorded."
+
+        embed = discord.Embed(
+            title="Discord API Metrics",
+            description=(
+                "Current in-memory API counters. "
+                + ("Counters were reset after this snapshot." if reset else "Counters are still accumulating.")
+            ),
+            color=discord.Color.orange() if rate_limits else discord.Color.green(),
+        )
+        embed.add_field(name="Calls", value=str(calls), inline=True)
+        embed.add_field(name="Errors", value=str(errors), inline=True)
+        embed.add_field(name="429s", value=str(rate_limits), inline=True)
+        embed.add_field(name="Avg Latency", value=f"{avg_ms:.1f}ms", inline=True)
+        embed.add_field(name="Max Latency", value=f"{max_ms:.1f}ms", inline=True)
+        embed.add_field(name="Top Routes", value=top_routes_text[:1024], inline=False)
+        embed.add_field(name="Rate-Limited Routes", value=rl_routes_text[:1024], inline=False)
+        embed.set_footer(text="Use /debug api-metrics reset:true to clear counters")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     
     @admin_group.command(name="help", description="Admin command reference")
     @is_admin_check()
@@ -2596,11 +2646,12 @@ class AdminPanel(commands.Cog):
         
         # Logging & Debugging
         embed.add_field(
-            name="🪵 Logging & Debug (`/debug logs`)",
+            name="🪵 Logging & Debug (`/debug`)",
             value=(
                 "`/debug logs level level:<DEBUG|INFO|WARNING|ERROR>` — Set runtime log level\n"
                 "`/debug logs tail [lines]` — View recent log entries\n"
-                "`/debug logs watch enable:<true|false>` — Stream logs to a channel in real time"
+                "`/debug logs watch enable:<true|false>` — Stream logs to a channel in real time\n"
+                "`/debug api-metrics [reset:true]` — View Discord API/429 counters"
             ),
             inline=False
         )
