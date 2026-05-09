@@ -51,10 +51,10 @@ reservation_id = Column(Integer, ForeignKey("reservations.id", ondelete="SET NUL
 - `/admin photo view` only works for active reservations → ❌ Limited
 
 ### After Fix
-- Photos persist perpetually → ✅ Complete historical record
-- Can query photos by user/tool/time → ✅ Full audit capability
-- `/admin photo view` works for all time ranges → ✅ Unrestricted queries
-- `reservation_id` becomes NULL after archiving → ✅ Orphaned photos queryable via cached fields
+- Photos persist perpetually →  Complete historical record
+- Can query photos by user/tool/time →  Full audit capability
+- `/admin photo view` works for all time ranges →  Unrestricted queries
+- `reservation_id` becomes NULL after archiving →  Orphaned photos queryable via cached fields
 
 ## Photo Querying After Fix
 

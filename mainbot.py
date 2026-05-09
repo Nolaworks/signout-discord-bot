@@ -1394,7 +1394,7 @@ async def reservations(interaction: discord.Interaction):
     
     with get_db_session() as session:
         res_repo = ReservationRepository(session)
-        reservations = res_repo.get_active_for_tool(tool_name)
+        reservations = res_repo.get_active_and_blocks_for_tool(tool_name)
         
         if not reservations:
             await interaction.followup.send(
@@ -1403,8 +1403,13 @@ async def reservations(interaction: discord.Interaction):
             )
             return
         
-        # Format reservations
-        items = [f"- **{r.username}** at `{r.formatted_time}`" for r in reservations]
+        # Format reservations (show admin blocks explicitly).
+        items = []
+        for reservation in reservations:
+            if reservation.status == ReservationStatusEnum.ADMIN_BLOCK:
+                items.append(f"- 🚫 **ADMIN BLOCK** at `{reservation.formatted_time}`")
+            else:
+                items.append(f"- **{reservation.username}** at `{reservation.formatted_time}`")
         message = f"📌 **Reservations for `{tool_name}`:**\n" + "\n".join(items)
         
         await interaction.followup.send(message)

@@ -148,7 +148,7 @@ python helper_scripts/migrate_photo_table.py
 
 **Photo Review Status:**
 - ⏳ **Pending** (approved = null) - Awaiting admin review
-- ✅ **Approved** (approved = true) - Photo accepted
+-  **Approved** (approved = true) - Photo accepted
 - ❌ **Rejected** (approved = false) - Photo rejected with reason
 
 ## Benefits of New System

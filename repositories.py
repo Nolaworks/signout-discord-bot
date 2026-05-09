@@ -311,6 +311,27 @@ class ReservationRepository:
                 ReservationModel.status == ReservationStatusEnum.ACTIVE
             )
         ).order_by(ReservationModel.start_time).all()
+
+    def get_active_and_blocks_for_tool(self, tool_name: str) -> List[ReservationModel]:
+        """Get ACTIVE and ADMIN_BLOCK reservations for a tool"""
+        return self.session.query(ReservationModel).filter(
+            and_(
+                ReservationModel.tool_name == tool_name,
+                ReservationModel.status.in_([
+                    ReservationStatusEnum.ACTIVE,
+                    ReservationStatusEnum.ADMIN_BLOCK,
+                ])
+            )
+        ).order_by(ReservationModel.start_time).all()
+
+    def get_admin_blocks_for_tool(self, tool_name: str) -> List[ReservationModel]:
+        """Get all ADMIN_BLOCK reservations for a tool"""
+        return self.session.query(ReservationModel).filter(
+            and_(
+                ReservationModel.tool_name == tool_name,
+                ReservationModel.status == ReservationStatusEnum.ADMIN_BLOCK,
+            )
+        ).order_by(ReservationModel.start_time).all()
     
     def get_active_for_user(self, user_id: str) -> List[ReservationModel]:
         """Get all active reservations for a user"""

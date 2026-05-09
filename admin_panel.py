@@ -373,13 +373,33 @@ class AdminPanel(commands.Cog):
             with get_db_session() as session:
                 tool_repo = ToolRepository(session)
                 tools = tool_repo.get_all()
-                
-                choices = [app_commands.Choice(name="[All Tools]", value="__ALL__")]
-                
+
+                normalized = current.strip()
+                selected_parts = [part.strip() for part in normalized.split(",")]
+                has_multi_input = len(selected_parts) > 1
+                selected_names = [part for part in selected_parts[:-1] if part]
+                selected_lower = {name.lower() for name in selected_names}
+                active_term = selected_parts[-1].lower() if selected_parts else ""
+                prefix = ", ".join(selected_names)
+
+                choices: List[app_commands.Choice[str]] = []
+                if (
+                    not has_multi_input
+                    and "__all__" not in normalized.lower()
+                    and (not active_term or "all" in active_term)
+                ):
+                    choices.append(app_commands.Choice(name="[All Tools]", value="__ALL__"))
+
                 for tool in tools:
-                    if current.lower() in tool.name.lower():
-                        choices.append(app_commands.Choice(name=tool.name, value=tool.name))
-                
+                    tool_name = tool.name
+                    if tool_name.lower() in selected_lower:
+                        continue
+                    if active_term and active_term not in tool_name.lower():
+                        continue
+
+                    choice_value = f"{prefix}, {tool_name}" if prefix else tool_name
+                    choices.append(app_commands.Choice(name=tool_name[:100], value=choice_value[:100]))
+
                 return choices[:25]  # Discord limit
         except Exception as e:
             logger.error(f"Error in tool_autocomplete: {e}")
@@ -389,23 +409,26 @@ class AdminPanel(commands.Cog):
         """Autocomplete for admin block selection in adunblock"""
         try:
             with get_db_session() as session:
-                res_repo = ReservationRepository(session)
-                tool_repo = ToolRepository(session)
-                
-                tools = tool_repo.get_all()
+                from database import ReservationModel
+
+                now_naive = get_now(CENTRAL_TZ).replace(tzinfo=None)
                 choices = []
-                
-                for tool in tools:
-                    reservations = res_repo.get_active_for_tool(tool.name)
-                    admin_blocks = [r for r in reservations if r.status == ReservationStatusEnum.ADMIN_BLOCK]
-                    
-                    for block in admin_blocks:
-                        display = f"{tool.name}: {block.formatted_time}"
-                        value = f"{tool.name}|{block.formatted_time}"
-                        
-                        if current.lower() in display.lower():
-                            choices.append(app_commands.Choice(name=display[:100], value=value[:100]))
-                
+
+                all_blocks = session.query(ReservationModel).filter(
+                    and_(
+                        ReservationModel.status == ReservationStatusEnum.ADMIN_BLOCK,
+                        ReservationModel.end_time > now_naive,
+                    )
+                ).order_by(ReservationModel.tool_name, ReservationModel.start_time).all()
+
+                current_lower = current.lower().strip()
+                for block in all_blocks:
+                    display = f"{block.tool_name}: {block.formatted_time}"
+                    if current_lower and current_lower not in display.lower():
+                        continue
+                    # Use block id as stable selection value (fits Discord 100-char limit).
+                    choices.append(app_commands.Choice(name=display[:100], value=str(block.id)))
+
                 return choices[:25]  # Discord limit
         except Exception as e:
             logger.error(f"Error in admin_block_autocomplete: {e}")
@@ -1604,7 +1627,7 @@ class AdminPanel(commands.Cog):
             
             # Build response embed
             embed = discord.Embed(
-                title=f"✅ Bulk Role Assignment Complete",
+                title=f" Bulk Role Assignment Complete",
                 description=f"Assigned {role.mention} for **{tool_name}** to server members.",
                 color=discord.Color.green()
             )
@@ -1614,13 +1637,13 @@ class AdminPanel(commands.Cog):
                 assigned_text = ", ".join(assigned)
                 if len(assigned_text) <= 1000:
                     embed.add_field(
-                        name=f"✅ Assigned ({len(assigned)})",
+                        name=f" Assigned ({len(assigned)})",
                         value=assigned_text,
                         inline=False
                     )
                 else:
                     embed.add_field(
-                        name=f"✅ Assigned ({len(assigned)})",
+                        name=f" Assigned ({len(assigned)})",
                         value=f"Assigned to {len(assigned)} members (list too long to display)",
                         inline=False
                     )
@@ -1668,7 +1691,7 @@ class AdminPanel(commands.Cog):
             return
         
         now = get_now(CENTRAL_TZ)
-        now_naive = now.astimezone(pytz.UTC).replace(tzinfo=None)  # Convert to naive UTC for comparison
+        now_naive = now.replace(tzinfo=None)  # Convert to naive Central for database comparison
         
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
@@ -1684,15 +1707,34 @@ class AdminPanel(commands.Cog):
             )
             session.flush()  # Ensure user is in database before creating reservations
             
-            # Determine which tools to block
-            if tool == "__ALL__":
-                tools_to_block = tool_repo.get_all()
+            # Determine which tools to block.
+            selected_raw = tool.strip()
+            all_tools = tool_repo.get_all()
+            tool_by_lower = {item.name.lower(): item for item in all_tools}
+
+            if selected_raw == "__ALL__" or selected_raw.lower() == "all":
+                tools_to_block = all_tools
             else:
-                single_tool = tool_repo.get_by_name(tool)
-                if not single_tool:
-                    await interaction.followup.send(f"Tool '{tool}' not found.", ephemeral=True)
+                requested_names = []
+                for name in (part.strip() for part in selected_raw.split(",")):
+                    if not name:
+                        continue
+                    requested_names.append(name)
+
+                if not requested_names:
+                    await interaction.followup.send("No tool names provided.", ephemeral=True)
                     return
-                tools_to_block = [single_tool]
+
+                deduped_names = list(dict.fromkeys(requested_names))
+                missing_names = [name for name in deduped_names if name.lower() not in tool_by_lower]
+                if missing_names:
+                    await interaction.followup.send(
+                        "Unknown tool(s): " + ", ".join(missing_names[:10]),
+                        ephemeral=True
+                    )
+                    return
+
+                tools_to_block = [tool_by_lower[name.lower()] for name in deduped_names]
             
             if not tools_to_block:
                 await interaction.followup.send("No tools found to block.", ephemeral=True)
@@ -1761,15 +1803,20 @@ class AdminPanel(commands.Cog):
             session.commit()
             
             # Build response
+            def _compact(names: List[str], cap: int = 10) -> str:
+                if len(names) <= cap:
+                    return ", ".join(names)
+                return ", ".join(names[:cap]) + f" (+{len(names) - cap} more)"
+
             parts = []
             if blocked_tools:
-                parts.append(f"Blocked: {', '.join(blocked_tools)}")
+                parts.append(f"Blocked: {_compact(blocked_tools)}")
             if skipped_active:
-                parts.append(f"Skipped (in use): {', '.join(skipped_active)}")
+                parts.append(f"Skipped (in use): {_compact(skipped_active)}")
             if skipped_overlap:
-                parts.append(f"Skipped (overlaps): {', '.join(skipped_overlap)}")
+                parts.append(f"Skipped (overlaps): {_compact(skipped_overlap)}")
             if modified:
-                parts.append(f"Modified: {', '.join(modified)}")
+                parts.append(f"Modified: {_compact(modified)}")
             
             if not parts:
                 await interaction.followup.send("No tools qualified for blocking.", ephemeral=True)
@@ -1783,33 +1830,34 @@ class AdminPanel(commands.Cog):
     async def admin_unblock_all(self, interaction: discord.Interaction, block: str):
         """Remove selected admin block"""
         await interaction.response.defer(thinking=True)
-        
-        # Parse the block selection (format: "tool_name|formatted_time")
+
+        # Parse the block selection (value is reservation id from autocomplete)
         try:
-            tool_name, formatted_time = block.split("|", 1)
-        except ValueError:
+            block_id = int(block)
+        except (TypeError, ValueError):
             await interaction.followup.send("Invalid block selection.", ephemeral=True)
             return
-        
+
         with get_db_session() as session:
-            res_repo = ReservationRepository(session)
-            
-            # Find the specific admin block
-            reservations = res_repo.get_active_for_tool(tool_name)
-            admin_blocks = [r for r in reservations 
-                          if r.status == ReservationStatusEnum.ADMIN_BLOCK 
-                          and r.formatted_time == formatted_time]
-            
-            if not admin_blocks:
+            from database import ReservationModel
+
+            block_res = session.query(ReservationModel).filter(
+                and_(
+                    ReservationModel.id == block_id,
+                    ReservationModel.status == ReservationStatusEnum.ADMIN_BLOCK,
+                )
+            ).first()
+
+            if not block_res:
                 await interaction.followup.send(
-                    f"No admin block found for {tool_name} at {formatted_time}",
+                    "No matching active admin block was found.",
                     ephemeral=True
                 )
                 return
-            
-            # Delete the block
-            for block_res in admin_blocks:
-                session.delete(block_res)
+
+            tool_name = block_res.tool_name
+            formatted_time = block_res.formatted_time
+            session.delete(block_res)
             
             session.commit()
             
@@ -1985,7 +2033,7 @@ class AdminPanel(commands.Cog):
                 )
             
             message = (
-                f"✅ Created reservation on behalf of **{username}**\n\n"
+                f" Created reservation on behalf of **{username}**\n\n"
                 f"**Tool:** {tool_name}\n"
                 f"**Time:** {formatted_time}\n"
                 f"**Duration:** {duration:.1f}h{photo_note}"
@@ -2143,7 +2191,7 @@ class AdminPanel(commands.Cog):
     
     @block_group.command(name="add", description="Block tool(s) for a time range")
     @app_commands.describe(
-        tool="Select tool to block, or [All Tools]",
+        tool="Tool name, comma list, or [All Tools]",
         time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
         force="If true, override overlapping future reservations"
     )
@@ -3091,7 +3139,7 @@ class AdminPanel(commands.Cog):
                 reservation = session.query(ReservationModel).filter_by(id=photo.reservation_id).first()
                 
                 status_info = "Active" if reservation and reservation.status.value == "ACTIVE" else "Archived"
-                photo_type_emoji = "🔧" if photo.photo_type.value == "start" else "✅"
+                photo_type_emoji = "🔧" if photo.photo_type.value == "start" else ""
                 
                 embed.add_field(
                     name=f"{photo_type_emoji} Photo ID {photo.id} - {photo.photo_type.value.upper()}",
@@ -3154,7 +3202,7 @@ class AdminPanel(commands.Cog):
             if success:
                 session.commit()
                 await interaction.response.send_message(
-                    f"✅ Approved {photo_obj.photo_type.value} photo for **{photo_obj.username}** - **{photo_obj.tool_name}**\n"
+                    f" Approved {photo_obj.photo_type.value} photo for **{photo_obj.username}** - **{photo_obj.tool_name}**\n"
                     f"Photo ID: {photo_id}",
                     ephemeral=True
                 )
@@ -3298,7 +3346,7 @@ class AdminPanel(commands.Cog):
                 
                 # Send each photo
                 for photo in photos:
-                    photo_type_emoji = "🔧" if photo.photo_type.value == "start" else "✅"
+                    photo_type_emoji = "🔧" if photo.photo_type.value == "start" else ""
                     
                     embed = discord.Embed(
                         title=f"{photo_type_emoji} {photo.photo_type.value.upper()} Photo",
@@ -3311,7 +3359,7 @@ class AdminPanel(commands.Cog):
                     embed.add_field(name="Reservation ID", value=str(photo.reservation_id), inline=True)
                     
                     if photo.approved is not None:
-                        status = "✅ Approved" if photo.approved else "❌ Rejected"
+                        status = " Approved" if photo.approved else "❌ Rejected"
                         embed.add_field(name="Status", value=f"{status} by {photo.reviewed_by_username}", inline=False)
                         if photo.review_notes:
                             embed.add_field(name="Notes", value=photo.review_notes, inline=False)
@@ -3324,7 +3372,7 @@ class AdminPanel(commands.Cog):
                     await admin_user.send(embed=embed)
                 
                 await interaction.followup.send(
-                    f"✅ Sent {len(photos)} photo(s) to your DMs",
+                    f" Sent {len(photos)} photo(s) to your DMs",
                     ephemeral=True
                 )
                 logger.info(f"Admin {interaction.user.name} viewed {len(photos)} photos for {username} - {tool}")
@@ -3383,7 +3431,7 @@ class AdminPanel(commands.Cog):
             
             session.commit()
             await interaction.response.send_message(
-                f"✅ Approved {count} photo(s)\n"
+                f" Approved {count} photo(s)\n"
                 f"**User:** {username}\n"
                 f"**Tool:** {tool_name}",
                 ephemeral=True
@@ -3455,7 +3503,7 @@ class AdminPanel(commands.Cog):
             session.commit()
 
         await interaction.response.send_message(
-            f"✅ Registered RFID card `{card_id}` for **{member.display_name}**.",
+            f" Registered RFID card `{card_id}` for **{member.display_name}**.",
             ephemeral=True,
         )
         logger.info(f"Admin {interaction.user.name} registered RFID card {card_id} for {target_username}")
@@ -3504,7 +3552,7 @@ class AdminPanel(commands.Cog):
             session.commit()
 
         await interaction.response.send_message(
-            f"✅ Revoked **{count}** RFID card(s) for **{member.display_name}**.",
+            f" Revoked **{count}** RFID card(s) for **{member.display_name}**.",
             ephemeral=True,
         )
         logger.info(f"Admin {interaction.user.name} revoked {count} RFID card(s) for {target_username}")
@@ -3565,7 +3613,7 @@ class AdminPanel(commands.Cog):
             session.commit()
 
         await interaction.response.send_message(
-            f"✅ Deleted RFID card `{card_id}` from **{member.display_name}**.",
+            f"Deleted RFID card `{card_id}` from **{member.display_name}**.",
             ephemeral=True,
         )
         logger.info(f"Admin {interaction.user.name} deleted RFID card {card_id} from {target_username}")
@@ -3678,7 +3726,7 @@ class AdminPanel(commands.Cog):
                     session.commit()
 
                     await interaction.followup.send(
-                        f"✅ Captured and assigned card `{card_id}` to **{member.display_name}**.",
+                        f" Captured and assigned card `{card_id}` to **{member.display_name}**.",
                         ephemeral=True,
                     )
                     logger.info(
@@ -3735,7 +3783,7 @@ class AdminPanel(commands.Cog):
             "DENY_ALL": "🔴 **Deny All** — all non-admin cards will be denied",
         }
         await interaction.response.send_message(
-            f"✅ Access override set to {labels.get(mode, mode)}",
+            f" Access override set to {labels.get(mode, mode)}",
             ephemeral=True,
         )
         logger.info(f"Admin {interaction.user.name} set access override to {mode}")
@@ -3895,7 +3943,7 @@ class AdminPanel(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         changed, scanned = await self._sync_all_admins()
         await interaction.followup.send(
-            f"✅ Admin sync done — updated **{changed}** user(s), scanned **{scanned}**.",
+            f" Admin sync done — updated **{changed}** user(s), scanned **{scanned}**.",
             ephemeral=True,
         )
 
@@ -3967,7 +4015,7 @@ class AdminPanel(commands.Cog):
             session.commit()
 
         await interaction.response.send_message(
-            f"✅ Granted **{SHOP_LEADER_ROLE}** to **{user.display_name}**. "
+            f" Granted **{SHOP_LEADER_ROLE}** to **{user.display_name}**. "
             f"They can now use `/admin access` and `/admin role` commands.",
             ephemeral=True,
         )
@@ -4023,7 +4071,7 @@ class AdminPanel(commands.Cog):
             session.commit()
 
         await interaction.response.send_message(
-            f"✅ Revoked **{SHOP_LEADER_ROLE}** from **{user.display_name}**.",
+            f" Revoked **{SHOP_LEADER_ROLE}** from **{user.display_name}**.",
             ephemeral=True,
         )
         logger.info(
