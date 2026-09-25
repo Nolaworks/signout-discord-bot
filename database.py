@@ -72,6 +72,15 @@ class UserModel(Base):
         return f"<User(user_id={self.user_id}, username={self.username})>"
 
 
+class SystemSettingModel(Base):
+    """Persistent runtime settings controlled by administrators."""
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(String(500), nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class ToolModel(Base):
     """Tool database model"""
     __tablename__ = "tools"

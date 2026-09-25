@@ -204,9 +204,11 @@ async def clean_expired_signouts():
             tool_repo = ToolRepository(session)
             from repositories import ReservationPhotoRepository, PhotoDebtRepository
             from database import PhotoTypeEnum, PhotoDebtTypeEnum
+            from repositories import PhotoSystemRepository
             
             photo_repo = ReservationPhotoRepository(session)
             photo_debt_repo = PhotoDebtRepository(session)
+            photo_system_enabled = PhotoSystemRepository(session).is_enabled()
             
             # Step 1: Mark expired reservations (ACTIVE/ADMIN_BLOCK past their end_time)
             expired = res_repo.get_expired_reservations(now_naive)
@@ -217,7 +219,8 @@ async def clean_expired_signouts():
                     
                     # For Tool Room tools, check if return photo exists
                     tool = tool_repo.get_by_name(reservation.tool_name)
-                    if tool and tool.is_tool_room and old_status == ReservationStatusEnum.ACTIVE:
+                    if (photo_system_enabled and tool and tool.is_tool_room
+                            and old_status == ReservationStatusEnum.ACTIVE):
                         # Check for return photos
                         return_photos = photo_repo.get_photos_by_type(reservation.id, PhotoTypeEnum.RETURN)
                         
@@ -260,7 +263,12 @@ async def clean_expired_signouts():
                     # Check if this is an EXPIRED or RETURNED reservation with outstanding return photo debt
                     if reservation.status in [ReservationStatusEnum.EXPIRED, ReservationStatusEnum.RETURNED]:
                         # Check for active return photo debts for this reservation
-                        active_return_debts = photo_debt_repo.get_active_debts_for_reservation(reservation.id, PhotoDebtTypeEnum.RETURN)
+                        active_return_debts = (
+                            photo_debt_repo.get_active_debts_for_reservation(
+                                reservation.id, PhotoDebtTypeEnum.RETURN
+                            )
+                            if photo_system_enabled else []
+                        )
                         
                         if active_return_debts:
                             # Don't archive yet - user needs to upload return photo
@@ -330,11 +338,17 @@ async def notification_check_task():
             waitlist_count = await notification_manager.check_tool_availability(session)
             
             # Check for photo grace period enforcement
-            photo_results = await notification_manager.check_photo_grace_periods(session)
-            
-            # Check for overdue photo debts (skip ones we just notified above)
-            notified_debt_ids = photo_results.get('notified_debt_ids', [])
-            blocked_count = await notification_manager.check_photo_debt_enforcement(session, skip_debt_ids=notified_debt_ids)
+            from repositories import PhotoSystemRepository
+            photo_system_enabled = PhotoSystemRepository(session).is_enabled()
+            if photo_system_enabled:
+                photo_results = await notification_manager.check_photo_grace_periods(session)
+                notified_debt_ids = photo_results.get('notified_debt_ids', [])
+                blocked_count = await notification_manager.check_photo_debt_enforcement(
+                    session, skip_debt_ids=notified_debt_ids
+                )
+            else:
+                photo_results = {'warnings_sent': 0, 'reservations_cancelled': 0}
+                blocked_count = 0
             
             # Check for RFID access notifications (tool room)
             access_count = await notification_manager.check_access_notifications(session)
@@ -503,6 +517,12 @@ async def handle_dm_photo_upload(message: discord.Message):
     if not photos:
         await message.channel.send("Please send an image file (PNG, JPG, etc.)")
         return
+
+    from repositories import PhotoSystemRepository
+    with get_db_session() as session:
+        if not PhotoSystemRepository(session).is_enabled():
+            await message.channel.send("The photo system is currently disabled.")
+            return
     
     user_id = get_user_id(message.author)
     username = message.author.name
@@ -1460,8 +1480,11 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
             is_tool_room=is_tool_room_channel(interaction.channel)
         )
         
-        # Check for outstanding photo debts if this is a Tool Room tool
-        if tool.is_tool_room and not is_admin:
+        from repositories import PhotoSystemRepository
+        photo_system_enabled = PhotoSystemRepository(session).is_enabled()
+
+        # Check for outstanding photo debts if photo enforcement is enabled.
+        if tool.is_tool_room and photo_system_enabled and not is_admin:
             from repositories import PhotoDebtRepository
             photo_debt_repo = PhotoDebtRepository(session)
             
@@ -1571,7 +1594,9 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         # Determine if photo is required for this reservation
         is_tool_room = tool.is_tool_room
         time_until_start = (start_time - get_now(CENTRAL_TZ)).total_seconds() / 60
-        photo_required = is_tool_room
+        from repositories import PhotoSystemRepository
+        photo_system_enabled = PhotoSystemRepository(session).is_enabled()
+        photo_required = is_tool_room and photo_system_enabled
         
         # If Tool Room and starts <= 30 min away and no photo, create reservation but set photo_required
         # User will need to DM photo within 10 min of start time
@@ -1596,7 +1621,7 @@ async def signout(interaction: discord.Interaction, time: str, photo: discord.At
         )
         
         # Add start photo if provided
-        if photo_url:
+        if photo_url and photo_system_enabled:
             from database import PhotoTypeEnum
             from repositories import ReservationPhotoRepository
             photo_repo = ReservationPhotoRepository(session)
@@ -1811,7 +1836,9 @@ async def tool_return(interaction: discord.Interaction, reservation: str):
         
         # Check if this is a Tool Room tool
         tool = tool_repo.get_by_name(tool_name)
-        if tool and tool.is_tool_room:
+        from repositories import PhotoSystemRepository
+        photo_system_enabled = PhotoSystemRepository(session).is_enabled()
+        if tool and tool.is_tool_room and photo_system_enabled:
             # Create photo debt for return photo
             from repositories import PhotoDebtRepository
             from database import PhotoDebtTypeEnum

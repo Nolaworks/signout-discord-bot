@@ -13,12 +13,73 @@ from database import (
     ToolStatisticsModel, UserStatisticsModel, UserToolStatisticsModel,
     ReservationStatusEnum, ToolSignoutLimitModel, ConsecutiveSignoutTracker,
     ConsecutiveSignoutExemption, ReservationPhotoModel, PhotoTypeEnum,
-    AdminActionLogModel
+    AdminActionLogModel, SystemSettingModel
 )
 from models import User, Tool, Reservation, ReservationHistory, ReservationPhoto, PhotoType
 from time_utils import calculate_duration_hours
 
 logger = logging.getLogger(__name__)
+
+
+class PhotoSystemRepository:
+    """Read and update the persistent global photo-enforcement setting."""
+
+    SETTING_KEY = "photo_system_enabled"
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def is_enabled(self) -> bool:
+        setting = self.session.query(SystemSettingModel).filter_by(key=self.SETTING_KEY).first()
+        return setting is None or setting.value.lower() == "true"
+
+    def set_enabled(self, enabled: bool) -> None:
+        setting = self.session.query(SystemSettingModel).filter_by(key=self.SETTING_KEY).first()
+        if setting is None:
+            setting = SystemSettingModel(key=self.SETTING_KEY, value=str(enabled).lower())
+            self.session.add(setting)
+        else:
+            setting.value = str(enabled).lower()
+
+        if not enabled:
+            self.session.query(ReservationModel).filter(
+                ReservationModel.photo_required.is_(True)
+            ).update(
+                {
+                    ReservationModel.photo_required: False,
+                    ReservationModel.photo_reminder_sent_at: None,
+                    ReservationModel.photo_warning_sent_at: None,
+                },
+                synchronize_session=False,
+            )
+
+    def purge_photo_data(self, admin_user_id: str) -> tuple[int, int, int, int]:
+        """Resolve active debts and remove stored photo references and records."""
+        from database import PhotoDebtModel
+
+        active_debts = self.session.query(PhotoDebtModel).filter(
+            PhotoDebtModel.resolved_at.is_(None)
+        ).all()
+        restored_users = {debt.user_id for debt in active_debts}
+        now = datetime.utcnow()
+        for debt in active_debts:
+            debt.resolved_at = now
+            debt.cleared_by_admin = True
+            debt.admin_user_id = admin_user_id
+            debt.photo_url = None
+
+        self.session.query(PhotoDebtModel).filter(
+            PhotoDebtModel.photo_url.isnot(None)
+        ).update({PhotoDebtModel.photo_url: None}, synchronize_session=False)
+        deleted_photos = self.session.query(ReservationPhotoModel).delete(
+            synchronize_session=False
+        )
+        cleared_history = self.session.query(ReservationHistoryModel).filter(
+            ReservationHistoryModel.photo_urls.isnot(None)
+        ).update(
+            {ReservationHistoryModel.photo_urls: None}, synchronize_session=False
+        )
+        return len(active_debts), len(restored_users), deleted_photos, cleared_history
 
 
 class UserRepository:

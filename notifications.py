@@ -443,6 +443,10 @@ class NotificationManager:
     
     async def check_photo_grace_periods(self, session: Session) -> dict:
         """Check for reservations that need photo enforcement"""
+        from repositories import PhotoSystemRepository
+        if not PhotoSystemRepository(session).is_enabled():
+            return {'warnings_sent': 0, 'reservations_cancelled': 0, 'notified_debt_ids': []}
+
         from database import ReservationStatusEnum, PhotoDebtTypeEnum
         from repositories import PhotoDebtRepository, ReservationHistoryRepository
         
@@ -595,7 +599,9 @@ class NotificationManager:
         Args:
             skip_debt_ids: List of debt IDs to skip (already notified in this cycle)
         """
-        from repositories import PhotoDebtRepository
+        from repositories import PhotoDebtRepository, PhotoSystemRepository
+        if not PhotoSystemRepository(session).is_enabled():
+            return 0
         
         now = get_now(CENTRAL_TZ)
         photo_debt_repo = PhotoDebtRepository(session)

@@ -122,20 +122,21 @@ Admin blocks prevent users from creating reservations during maintenance or spec
 ```
 
 **Parameters:**
-- `tool`: Select from dropdown. Choose `[All Tools]` to block everything
+- `tool`: Search and select one or more tools from autocomplete; type a comma between selections. Choose `[All Tools]` alone to select every tool.
 - `time`: Natural language time range (e.g., "tomorrow 9am to 5pm", "friday all day")
-- `force`: If true, cancels conflicting reservations (default: false)
+- `force`: For named tools only, modify conflicting future reservations. It never overrides a reservation currently in use and is ignored for `[All Tools]`.
 
 **Examples:**
 ```
 /admin block add tool:laser-cutter time:friday 8am to 12pm force:false
+/admin block add tool:laser-cutter, drill-press time:friday 8am to 12pm force:false
 /admin block add tool:[All Tools] time:12/25 all day force:true
 ```
 
 **Behavior:**
 - Blocks are treated as ADMIN_BLOCK reservations by user "admin-block"
-- Cannot overlap with tools currently in use
-- If force=true, shortens or cancels conflicting future reservations
+- `[All Tools]` skips every tool with a reservation overlapping the requested time, even if `force=true`
+- Named-tool blocks with `force=true` may shorten or cancel conflicting future reservations, but never a reservation currently in use
 - Automatically removed after end time passes
 
 ### Viewing Active Blocks
@@ -224,6 +225,25 @@ Allows you to modify any user's reservation time.
 ---
 
 ## Photo Management
+
+### Disable Photo Enforcement
+
+Turn photo enforcement off without deleting existing photo records:
+```
+/admin photo bypass enabled:false
+```
+
+Disable enforcement, resolve all pending photo debts (restoring signout access), delete stored photo records and debt photo URLs, and clear photo URLs from reservation history:
+```
+/admin photo bypass enabled:false clear_data:true
+```
+
+Re-enable enforcement for new reservations:
+```
+/admin photo bypass enabled:true
+```
+
+Disabling photo enforcement clears outstanding `photo_required` flags so existing reservations do not continue sending photo reminders.
 
 ### Understanding Photo Requirements
 
@@ -765,6 +785,7 @@ Enable to stream logs in real-time to the current channel. Disable to stop strea
 - `/admin block list` - View all active blocks
 
 ### Photo Management
+- `/admin photo bypass` - Disable/re-enable photo enforcement; optionally clear debts and stored photo data
 - `/admin photo view` - Query and view photos
 - `/admin photo approve` - Approve a photo
 - `/admin photo reject` - Reject a photo

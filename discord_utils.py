@@ -372,7 +372,10 @@ def user_is_admin(user) -> bool:
     
     # Check for configured admin roles
     config = get_config()
-    return any(role.name in config.admin_roles for role in getattr(user, "roles", []))
+    return any(
+        role.name in config.admin_roles or role.name == SHOP_LEADER_ROLE
+        for role in getattr(user, "roles", [])
+    )
 
 
 def is_admin_check():
@@ -401,8 +404,7 @@ def user_is_developer(user) -> bool:
     return any(role.name in config.developer_roles for role in getattr(user, "roles", []))
 
 
-# Name of the limited-admin Discord role used to delegate access-control
-# and tool-role commands to non-admin staff.
+# Name of the admin-equivalent Discord role delegated to shop leaders.
 SHOP_LEADER_ROLE = "Shop Leader"
 
 

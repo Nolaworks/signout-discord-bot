@@ -83,7 +83,7 @@ Configure preferences with `/notifyprefs`.
 
 ## Administrator Guide
 
-Admin commands require Administrator permission in Discord.
+Admin commands require Administrator permission, a configured admin role (including Board Member), or the Shop Leader role. Developer-only commands remain restricted to developers.
 
 ### Command Groups
 
@@ -127,7 +127,7 @@ Set maximum reservation time for the current tool.
 ```
 /admin block add tool:<select> time:<range> [force:<bool>]
 ```
-Block a tool from reservations. Select "[All Tools]" to block everything. Use `force:true` to override existing reservations.
+Search and select multiple tools with comma-separated autocomplete selections. Choose `[All Tools]` alone to attempt a block across every tool. Any overlapping reservation makes that tool skip, even with `force:true`. For named tools, `force:true` may modify overlapping future reservations but never one currently in use.
 
 ```
 /admin block remove block:<select>
@@ -175,6 +175,13 @@ Control access to tools with Discord roles.
 | `/admin role assign user:<name>` | Grant tool access |
 | `/admin role revoke user:<name>` | Remove tool access |
 | `/admin role sync` | Create roles for all tools |
+
+### Photo Enforcement
+
+```
+/admin photo bypass enabled:false [clear_data:true]
+```
+Disable photo enforcement. Add `clear_data:true` to resolve pending debts and restore affected users' signout access, delete stored photo records, and clear photo URLs from history. Use `enabled:true` to re-enable enforcement.
 
 ### Logging & Debugging
 

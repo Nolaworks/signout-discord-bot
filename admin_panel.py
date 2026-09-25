@@ -21,9 +21,11 @@ from config import get_config
 from db_session import get_db_session
 from repositories import (
     UserRepository, ToolRepository, ReservationRepository,
-    ReservationHistoryRepository, StatisticsRepository, ConsecutiveSignoutRepository
+    ReservationHistoryRepository, StatisticsRepository, ConsecutiveSignoutRepository,
+    PhotoSystemRepository, PhotoDebtRepository
 )
 from database import ReservationStatusEnum
+from admin_blocking import parse_tool_selection, should_skip_for_conflicts
 from gptparse import rewrite_reservation_with_gpt, parse_time_with_gpt
 from time_utils import (
     parse_time_range, format_datetime, check_overlap, 
@@ -162,7 +164,7 @@ class AdminPanel(commands.Cog):
 
     shop_leader_group = app_commands.Group(
         name="shop-leader",
-        description="Grant or revoke the Shop Leader limited-admin role",
+        description="Grant or revoke the Shop Leader admin role",
         parent=admin_group
     )
     
@@ -368,7 +370,7 @@ class AdminPanel(commands.Cog):
     # ========== Admin Block Commands ==========
     
     async def tool_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-        """Autocomplete for tool selection in adblock"""
+        """Search tools; selecting entries builds a comma-separated multi-tool selection."""
         try:
             with get_db_session() as session:
                 tool_repo = ToolRepository(session)
@@ -1689,14 +1691,12 @@ class AdminPanel(commands.Cog):
         except Exception:
             await interaction.followup.send("Parsed time range appears invalid.", ephemeral=True)
             return
-        
-        now = get_now(CENTRAL_TZ)
-        now_naive = now.replace(tzinfo=None)  # Convert to naive Central for database comparison
+
+        now_naive = get_now(CENTRAL_TZ).replace(tzinfo=None)
         
         with get_db_session() as session:
             tool_repo = ToolRepository(session)
             res_repo = ReservationRepository(session)
-            history_repo = ReservationHistoryRepository(session)
             user_repo = UserRepository(session)
             
             # Ensure admin user exists for admin blocks
@@ -1708,19 +1708,13 @@ class AdminPanel(commands.Cog):
             session.flush()  # Ensure user is in database before creating reservations
             
             # Determine which tools to block.
-            selected_raw = tool.strip()
             all_tools = tool_repo.get_all()
             tool_by_lower = {item.name.lower(): item for item in all_tools}
 
-            if selected_raw == "__ALL__" or selected_raw.lower() == "all":
+            all_tools_selected, requested_names = parse_tool_selection(tool)
+            if all_tools_selected:
                 tools_to_block = all_tools
             else:
-                requested_names = []
-                for name in (part.strip() for part in selected_raw.split(",")):
-                    if not name:
-                        continue
-                    requested_names.append(name)
-
                 if not requested_names:
                     await interaction.followup.send("No tool names provided.", ephemeral=True)
                     return
@@ -1746,18 +1740,19 @@ class AdminPanel(commands.Cog):
             modified = []
             
             for tool_item in tools_to_block:
-                # Check if tool is currently active
-                reservations = res_repo.get_active_for_tool(tool_item.name)
-                currently_active = any(r.start_time <= now_naive < r.end_time for r in reservations)
-                
+                # Check for overlapping reservations
+                conflicts = res_repo.check_conflicts(tool_item.name, block_start, block_end)
+
+                currently_active = any(
+                    conflict.status == ReservationStatusEnum.ACTIVE
+                    and conflict.start_time <= now_naive < conflict.end_time
+                    for conflict in conflicts
+                )
                 if currently_active:
                     skipped_active.append(tool_item.name)
                     continue
-                
-                # Check for overlapping reservations
-                conflicts = res_repo.check_conflicts(tool_item.name, block_start, block_end)
-                
-                if conflicts and not force:
+
+                if should_skip_for_conflicts(conflicts, all_tools_selected, force):
                     skipped_overlap.append(tool_item.name)
                     continue
                 
@@ -2191,15 +2186,66 @@ class AdminPanel(commands.Cog):
     
     @block_group.command(name="add", description="Block tool(s) for a time range")
     @app_commands.describe(
-        tool="Tool name, comma list, or [All Tools]",
+        tool="Search/select tools; add multiple separated by commas, or choose [All Tools] alone",
         time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
-        force="If true, override overlapping future reservations"
+        force="Override conflicts for named tools; ignored for [All Tools]"
     )
     @app_commands.autocomplete(tool=tool_autocomplete)
     @is_admin_check()
     async def block_add(self, interaction: discord.Interaction, tool: str, time: str, force: bool = False):
         """Add block - nested grouped version"""
         await self.admin_block_all(interaction, tool, time, force)
+
+    @photo_group.command(name="bypass", description="Disable or re-enable Tool Room photo enforcement")
+    @app_commands.describe(
+        enabled="Keep photo enforcement enabled; false turns the photo system off",
+        clear_data="When turning it off, resolve debts and delete stored photo data",
+    )
+    @is_admin_check()
+    async def photo_bypass(self, interaction: discord.Interaction,
+                           enabled: bool = False, clear_data: bool = False):
+        """Disable photo enforcement and optionally clear its debts and stored photos."""
+        if enabled and clear_data:
+            await interaction.response.send_message(
+                "Photo data can only be cleared while disabling the photo system.",
+                ephemeral=True,
+            )
+            return
+
+        admin_user_id = str(interaction.user.id)
+        with get_db_session() as session:
+            PhotoSystemRepository(session).set_enabled(enabled)
+            cleared_debts = 0
+            restored_users = 0
+            deleted_photos = 0
+            cleared_history = 0
+
+            if clear_data:
+                (
+                    cleared_debts,
+                    restored_users,
+                    deleted_photos,
+                    cleared_history,
+                ) = PhotoSystemRepository(session).purge_photo_data(admin_user_id)
+
+            session.commit()
+
+        if enabled:
+            response = "Photo enforcement is enabled."
+        else:
+            response = "Photo enforcement is disabled."
+            if clear_data:
+                response += (
+                    f" Cleared {cleared_debts} pending debt(s) for {len(restored_users)} user(s), "
+                    f"deleted {deleted_photos} photo record(s), and cleared photo data from "
+                    f"{cleared_history} history record(s)."
+                )
+
+        await interaction.response.send_message(response, ephemeral=True)
+        logger.info(
+            "Admin %s set photo enforcement enabled=%s clear_data=%s debts_cleared=%s",
+            interaction.user.name, enabled, clear_data, cleared_debts,
+        )
     
     @block_group.command(name="remove", description="Remove selected admin block(s)")
     @app_commands.describe(block="Select admin block to remove")
@@ -2649,6 +2695,9 @@ class AdminPanel(commands.Cog):
                 "Tool Room channels require photos at signout and return. Missing a photo "
                 "creates a debt that blocks the user from new signouts.\n\n"
                 "**Debt Management:**\n"
+                "`/admin photo bypass enabled:false` — Disable all photo enforcement\n"
+                "`/admin photo bypass enabled:false clear_data:true` — Disable, clear photos/debts, and restore debt-blocked access\n"
+                "`/admin photo bypass enabled:true` — Re-enable photo enforcement\n\n"
                 "`/admin debt clear user:<name>` — Clear a user's photo debts & unblock them\n"
                 "`/admin debt audit` — View all outstanding photo debts\n"
                 "`/admin debt list [tool]` — View debts for a specific tool\n\n"
@@ -3954,7 +4003,7 @@ class AdminPanel(commands.Cog):
 
     @shop_leader_group.command(
         name="grant",
-        description="Grant a user the Shop Leader role (limited admin: access + role commands)",
+        description="Grant a user the Shop Leader role (admin privileges)",
     )
     @app_commands.describe(user="User to promote to Shop Leader")
     @is_admin_check()
@@ -4016,7 +4065,7 @@ class AdminPanel(commands.Cog):
 
         await interaction.response.send_message(
             f" Granted **{SHOP_LEADER_ROLE}** to **{user.display_name}**. "
-            f"They can now use `/admin access` and `/admin role` commands.",
+            "They now have the same admin command privileges as Board Members.",
             ephemeral=True,
         )
         logger.info(
