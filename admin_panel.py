@@ -2236,7 +2236,7 @@ class AdminPanel(commands.Cog):
             response = "Photo enforcement is disabled."
             if clear_data:
                 response += (
-                    f" Cleared {cleared_debts} pending debt(s) for {len(restored_users)} user(s), "
+                    f" Cleared {cleared_debts} pending debt(s) for {restored_users} user(s), "
                     f"deleted {deleted_photos} photo record(s), and cleared photo data from "
                     f"{cleared_history} history record(s)."
                 )
