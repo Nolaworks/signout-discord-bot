@@ -3,6 +3,7 @@ Database session management and initialization.
 """
 from contextlib import contextmanager
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
 import logging
@@ -23,7 +24,8 @@ def init_database():
     
     config = get_config()
     
-    logger.info(f"Initializing database: {config.database_url}")
+    safe_database_url = make_url(config.database_url).render_as_string(hide_password=True)
+    logger.info("Initializing database: %s", safe_database_url)
     
     # Create engine
     _engine = create_engine(
