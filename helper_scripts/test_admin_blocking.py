@@ -24,7 +24,7 @@ class AdminBlockSelectionTests(unittest.TestCase):
         self.assertFalse(is_all)
         self.assertEqual(names, ["Table Saw", "Drill Press"])
 
-    def test_search_autocomplete_appends_selected_tools(self):
+    def test_search_autocomplete_returns_standalone_tool_value(self):
         class Tool:
             def __init__(self, name):
                 self.name = name
@@ -39,12 +39,22 @@ class AdminBlockSelectionTests(unittest.TestCase):
         with patch("admin_panel.get_db_session", return_value=nullcontext(object())), \
                 patch("admin_panel.ToolRepository", ToolRepo):
             choices = asyncio.run(
-                AdminPanel.tool_autocomplete(None, None, "Table Saw, drill")
+                AdminPanel.tool_autocomplete(None, None, "drill")
             )
 
         self.assertEqual([(choice.name, choice.value) for choice in choices], [
-            ("Drill Press", "Table Saw, Drill Press"),
+            ("Drill Press", "Drill Press"),
         ])
+
+    def test_multiple_independent_fields_and_all_tools_cannot_mix(self):
+        self.assertEqual(
+            parse_tool_selection(["Table Saw", "Drill Press", None]),
+            (False, ["Table Saw", "Drill Press"]),
+        )
+        self.assertEqual(
+            parse_tool_selection(["__ALL__", "Drill Press"]),
+            (True, ["Drill Press"]),
+        )
 
     def test_keeps_all_tools_as_a_single_selection(self):
         self.assertEqual(parse_tool_selection("__ALL__"), (True, []))

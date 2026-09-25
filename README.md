@@ -125,9 +125,9 @@ Set maximum reservation time for the current tool.
 ### Admin Blocks
 
 ```
-/admin block add tool:<select> time:<range> [force:<bool>]
+/admin block add tool_1:<select> [tool_2...tool_10:<select>] time:<range> [force:<bool>]
 ```
-Search and select multiple tools with comma-separated autocomplete selections. Choose `[All Tools]` alone to attempt a block across every tool. Any overlapping reservation makes that tool skip, even with `force:true`. For named tools, `force:true` may modify overlapping future reservations but never one currently in use.
+Select each tool independently in its own searchable field. Choose `[All Tools]` in `tool_1` and leave the other tool fields empty to attempt a block across every tool. Any overlapping reservation makes that tool skip, even with `force:true`. For named tools, `force:true` may modify overlapping future reservations but never one currently in use.
 
 ```
 /admin block remove block:<select>

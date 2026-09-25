@@ -370,37 +370,24 @@ class AdminPanel(commands.Cog):
     # ========== Admin Block Commands ==========
     
     async def tool_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-        """Search tools; selecting entries builds a comma-separated multi-tool selection."""
+        """Search available tools for one independent block tool option."""
         try:
             with get_db_session() as session:
                 tool_repo = ToolRepository(session)
                 tools = tool_repo.get_all()
 
-                normalized = current.strip()
-                selected_parts = [part.strip() for part in normalized.split(",")]
-                has_multi_input = len(selected_parts) > 1
-                selected_names = [part for part in selected_parts[:-1] if part]
-                selected_lower = {name.lower() for name in selected_names}
-                active_term = selected_parts[-1].lower() if selected_parts else ""
-                prefix = ", ".join(selected_names)
+                active_term = current.strip().lower()
 
                 choices: List[app_commands.Choice[str]] = []
-                if (
-                    not has_multi_input
-                    and "__all__" not in normalized.lower()
-                    and (not active_term or "all" in active_term)
-                ):
+                if not active_term or "all" in active_term:
                     choices.append(app_commands.Choice(name="[All Tools]", value="__ALL__"))
 
                 for tool in tools:
                     tool_name = tool.name
-                    if tool_name.lower() in selected_lower:
-                        continue
                     if active_term and active_term not in tool_name.lower():
                         continue
 
-                    choice_value = f"{prefix}, {tool_name}" if prefix else tool_name
-                    choices.append(app_commands.Choice(name=tool_name[:100], value=choice_value[:100]))
+                    choices.append(app_commands.Choice(name=tool_name[:100], value=tool_name[:100]))
 
                 return choices[:25]  # Discord limit
         except Exception as e:
@@ -1673,7 +1660,7 @@ class AdminPanel(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             logger.info(f"Bulk role assignment for {tool_name}: {len(assigned)} assigned, {len(already_had)} already had, {len(errors)} errors")
 
-    async def admin_block_all(self, interaction: discord.Interaction, tool: str, time: str, force: bool = False):
+    async def admin_block_all(self, interaction: discord.Interaction, tool: list[str | None], time: str, force: bool = False):
         """Apply an admin block to selected tool(s)"""
         await interaction.response.defer(thinking=True)
         
@@ -1713,6 +1700,12 @@ class AdminPanel(commands.Cog):
 
             all_tools_selected, requested_names = parse_tool_selection(tool)
             if all_tools_selected:
+                if requested_names:
+                    await interaction.followup.send(
+                        "[All Tools] must be selected by itself; remove the other tool selections.",
+                        ephemeral=True,
+                    )
+                    return
                 tools_to_block = all_tools
             else:
                 if not requested_names:
@@ -2186,15 +2179,52 @@ class AdminPanel(commands.Cog):
     
     @block_group.command(name="add", description="Block tool(s) for a time range")
     @app_commands.describe(
-        tool="Search/select tools; add multiple separated by commas, or choose [All Tools] alone",
+        tool_1="Search for the first tool, or choose [All Tools] by itself",
+        tool_2="Optional additional tool",
+        tool_3="Optional additional tool",
+        tool_4="Optional additional tool",
+        tool_5="Optional additional tool",
+        tool_6="Optional additional tool",
+        tool_7="Optional additional tool",
+        tool_8="Optional additional tool",
+        tool_9="Optional additional tool",
+        tool_10="Optional additional tool",
         time="Time range (e.g. 'now to 2pm' or 'tomorrow 10-2')",
         force="Override conflicts for named tools; ignored for [All Tools]"
     )
-    @app_commands.autocomplete(tool=tool_autocomplete)
+    @app_commands.autocomplete(
+        tool_1=tool_autocomplete,
+        tool_2=tool_autocomplete,
+        tool_3=tool_autocomplete,
+        tool_4=tool_autocomplete,
+        tool_5=tool_autocomplete,
+        tool_6=tool_autocomplete,
+        tool_7=tool_autocomplete,
+        tool_8=tool_autocomplete,
+        tool_9=tool_autocomplete,
+        tool_10=tool_autocomplete,
+    )
     @is_admin_check()
-    async def block_add(self, interaction: discord.Interaction, tool: str, time: str, force: bool = False):
+    async def block_add(
+        self,
+        interaction: discord.Interaction,
+        tool_1: str,
+        tool_2: str | None = None,
+        tool_3: str | None = None,
+        tool_4: str | None = None,
+        tool_5: str | None = None,
+        tool_6: str | None = None,
+        tool_7: str | None = None,
+        tool_8: str | None = None,
+        tool_9: str | None = None,
+        tool_10: str | None = None,
+        *,
+        time: str,
+        force: bool = False,
+    ):
         """Add block - nested grouped version"""
-        await self.admin_block_all(interaction, tool, time, force)
+        tools = [tool_1, tool_2, tool_3, tool_4, tool_5, tool_6, tool_7, tool_8, tool_9, tool_10]
+        await self.admin_block_all(interaction, tools, time, force)
 
     @photo_group.command(name="bypass", description="Disable or re-enable Tool Room photo enforcement")
     @app_commands.describe(
@@ -2636,9 +2666,10 @@ class AdminPanel(commands.Cog):
             name="🚫 Admin Blocks (`/admin block`)",
             value=(
                 "Prevent signouts for maintenance, events, etc.\n"
-                "`/admin block add tool:<select> time:<range> [force]` — Block tool(s) for a time window\n"
-                "  • Select `[All Tools]` to block everything\n"
-                "  • `force:true` cancels overlapping reservations\n"
+                "`/admin block add tool_1:<select> [tool_2...tool_10] time:<range> [force]`\n"
+                "  • Select each tool in its own searchable field\n"
+                "  • Choose `[All Tools]` in tool_1 and leave other tool fields blank to select everything\n"
+                "  • All-tools skips conflicts; force only modifies future conflicts on named tools\n"
                 "`/admin block remove block:<select>` — Remove a block\n"
                 "`/admin block list` — Show all active blocks"
             ),

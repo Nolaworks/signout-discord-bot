@@ -1,14 +1,13 @@
 """Pure selection and conflict rules for admin reservation blocks."""
 
 
-def parse_tool_selection(selection: str) -> tuple[bool, list[str]]:
-    """Return whether all tools were selected and the requested tool names."""
-    raw = selection.strip()
-    if raw.lower() in {"all", "__all__"}:
-        return True, []
-
-    names = (part.strip() for part in raw.split(","))
-    return False, list(dict.fromkeys(name for name in names if name))
+def parse_tool_selection(selection: str | list[str | None]) -> tuple[bool, list[str]]:
+    """Return whether all tools were selected and the independently selected names."""
+    values = selection.split(",") if isinstance(selection, str) else selection
+    values = [value.strip() for value in values if value and value.strip()]
+    all_tools_selected = any(value.lower() in {"all", "__all__"} for value in values)
+    names = [value for value in values if value.lower() not in {"all", "__all__"}]
+    return all_tools_selected, list(dict.fromkeys(names))
 
 
 def should_skip_for_conflicts(

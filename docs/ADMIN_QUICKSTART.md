@@ -27,7 +27,7 @@ As an admin, you have access to commands for:
 | Task | Command |
 | :---- | :---- |
 | Add a new tool | `/admin tool add tool:<name>` |
-| Block a tool for maintenance | `/admin block add tool:<select> time:<range>` |
+| Block tools for maintenance | `/admin block add tool_1:<select> [tool_2...tool_10] time:<range>` |
 | Sign out tool for user | `/admin signout user:<name> tool:<name> time:<range>` |
 | Clear all reservations | `/admin reservation clear` |
 | Force return a reservation | `/admin reservation forcereturn` |
@@ -118,19 +118,19 @@ Admin blocks prevent users from creating reservations during maintenance or spec
 ### Creating a Block
 
 ```
-/admin block add tool:<select> time:<range> force:<true|false>
+/admin block add tool_1:<select> [tool_2...tool_10:<select>] time:<range> force:<true|false>
 ```
 
 **Parameters:**
-- `tool`: Search and select one or more tools from autocomplete; type a comma between selections. Choose `[All Tools]` alone to select every tool.
+- `tool_1` through `tool_10`: Search and select each tool independently. Leave unused fields empty. Choose `[All Tools]` in `tool_1` and leave all other tool fields empty to select every tool.
 - `time`: Natural language time range (e.g., "tomorrow 9am to 5pm", "friday all day")
 - `force`: For named tools only, modify conflicting future reservations. It never overrides a reservation currently in use and is ignored for `[All Tools]`.
 
 **Examples:**
 ```
-/admin block add tool:laser-cutter time:friday 8am to 12pm force:false
-/admin block add tool:laser-cutter, drill-press time:friday 8am to 12pm force:false
-/admin block add tool:[All Tools] time:12/25 all day force:true
+/admin block add tool_1:laser-cutter time:friday 8am to 12pm force:false
+/admin block add tool_1:laser-cutter tool_2:drill-press time:friday 8am to 12pm force:false
+/admin block add tool_1:[All Tools] time:12/25 all day force:true
 ```
 
 **Behavior:**
