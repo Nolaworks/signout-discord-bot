@@ -62,7 +62,7 @@ sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE signout_bot TO botuse
 cp .env.example .env
 
 # Edit .env and set:
-# DATABASE_URL=DATABASE_URL_REDACTEDlocalhost:5432/signout_bot
+# DATABASE_URL=postgresql://HOST:PORT/DATABASElocalhost:5432/signout_bot
 ```
 
 3. **Run migration**:

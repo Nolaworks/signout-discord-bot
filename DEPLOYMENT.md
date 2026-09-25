@@ -178,9 +178,9 @@ DISCORD_TOKEN=your_discord_bot_token
 OPENAI_API_KEY=your_openai_api_key
 
 # PostgreSQL Connection
-# Format: DATABASE_URL_REDACTEDhost:port/database
+# Format: postgresql://HOST:PORT/DATABASEhost:port/database
 # URL-encode special characters in password (@ becomes %40, etc.)
-DATABASE_URL=DATABASE_URL_REDACTEDlocalhost:5432/signout_bot
+DATABASE_URL=postgresql://HOST:PORT/DATABASElocalhost:5432/signout_bot
 
 # Timezone
 TIMEZONE=America/Chicago

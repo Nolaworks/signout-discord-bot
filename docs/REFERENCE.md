@@ -82,7 +82,7 @@ DISCORD_TOKEN=your_token_here
 OPENAI_API_KEY=your_key_here
 
 # Database (choose one)
-DATABASE_URL=DATABASE_URL_REDACTEDlocalhost/signout_bot
+DATABASE_URL=postgresql://HOST:PORT/DATABASElocalhost/signout_bot
 # DATABASE_URL=sqlite:///signout_bot.db
 
 # Optional

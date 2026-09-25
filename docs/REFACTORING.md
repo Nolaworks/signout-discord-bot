@@ -195,7 +195,7 @@ Benefits:
    - Copy `.env.example` to `.env`
    - Set `DATABASE_URL` for PostgreSQL:
      ```
-     DATABASE_URL=DATABASE_URL_REDACTEDlocalhost:5432/signout_bot
+     DATABASE_URL=postgresql://HOST:PORT/DATABASElocalhost:5432/signout_bot
      ```
    - Or use SQLite for testing:
      ```

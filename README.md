@@ -295,7 +295,7 @@ Create a `.env` file with:
 # Required
 DISCORD_TOKEN=your_discord_bot_token
 OPENAI_API_KEY=your_openai_api_key
-DATABASE_URL=DATABASE_URL_REDACTEDhost:5432/signout_bot
+DATABASE_URL=postgresql://HOST:PORT/DATABASEhost:5432/signout_bot
 
 # Optional
 TIMEZONE=America/Chicago
