@@ -92,7 +92,7 @@ class PhotoSystemRepositoryTests(unittest.TestCase):
         self.session.close()
         self.engine.dispose()
 
-    def test_bypass_persists_and_purge_restores_users_and_removes_photo_data(self):
+    def test_bypass_purge_restores_users_and_preserves_historical_photo_data(self):
         user = UserModel(user_id="user-1", username="member")
         tool = ToolModel(name="Tool Room Saw", is_tool_room=True)
         self.session.add_all([user, tool])
@@ -132,6 +132,24 @@ class PhotoSystemRepositoryTests(unittest.TestCase):
                 username=user.username,
                 tool_name=tool.name,
             ),
+            ReservationPhotoModel(
+                reservation_id=reservation.id,
+                photo_type=PhotoTypeEnum.RETURN,
+                photo_url="https://example.invalid/approved-photo",
+                user_id=user.user_id,
+                username=user.username,
+                tool_name=tool.name,
+                approved=True,
+            ),
+            ReservationPhotoModel(
+                reservation_id=reservation.id,
+                photo_type=PhotoTypeEnum.RETURN,
+                photo_url="https://example.invalid/rejected-photo",
+                user_id=user.user_id,
+                username=user.username,
+                tool_name=tool.name,
+                approved=False,
+            ),
             ReservationHistoryModel(
                 user_id=user.user_id,
                 username=user.username,
@@ -146,6 +164,18 @@ class PhotoSystemRepositoryTests(unittest.TestCase):
                 created_at=now,
             ),
         ])
+        resolved_debt = PhotoDebtModel(
+            user_id=user.user_id,
+            tool_id=tool.id,
+            reservation_id=reservation.id,
+            username=user.username,
+            tool_name=tool.name,
+            debt_type=PhotoDebtTypeEnum.START,
+            photo_url="https://example.invalid/historical-debt-photo",
+            resolved_at=now - timedelta(days=1),
+            due_at=now - timedelta(days=2),
+        )
+        self.session.add(resolved_debt)
         self.session.commit()
 
         repository = PhotoSystemRepository(self.session)
@@ -155,16 +185,26 @@ class PhotoSystemRepositoryTests(unittest.TestCase):
         self.session.commit()
 
         self.assertFalse(repository.is_enabled())
-        self.assertEqual(counts, (1, 1, 1, 1))
+        self.assertEqual(counts, (1, 1, 1))
         self.assertFalse(self.session.get(ReservationModel, reservation.id).photo_required)
-        debt = self.session.query(PhotoDebtModel).one()
-        self.assertIsNotNone(debt.resolved_at)
-        self.assertTrue(debt.cleared_by_admin)
-        self.assertEqual(debt.admin_user_id, "admin-1")
-        self.assertIsNone(debt.photo_url)
-        self.assertEqual(self.session.query(ReservationPhotoModel).count(), 0)
+        pending_debt = self.session.query(PhotoDebtModel).filter(
+            PhotoDebtModel.admin_user_id == "admin-1"
+        ).one()
+        historical_debt = self.session.query(PhotoDebtModel).filter(
+            PhotoDebtModel.admin_user_id.is_(None)
+        ).one()
+        self.assertIsNotNone(pending_debt.resolved_at)
+        self.assertTrue(pending_debt.cleared_by_admin)
+        self.assertEqual(pending_debt.admin_user_id, "admin-1")
+        self.assertIsNone(pending_debt.photo_url)
+        self.assertEqual(historical_debt.photo_url, "https://example.invalid/historical-debt-photo")
+        retained_photos = self.session.query(ReservationPhotoModel).order_by(
+            ReservationPhotoModel.approved
+        ).all()
+        self.assertEqual(len(retained_photos), 2)
+        self.assertEqual({photo.approved for photo in retained_photos}, {False, True})
         history = self.session.query(ReservationHistoryModel).one()
-        self.assertIsNone(history.photo_urls)
+        self.assertEqual(history.photo_urls, '["https://example.invalid/history-photo"]')
         setting = self.session.query(SystemSettingModel).one()
         self.assertEqual(setting.value, "false")
 

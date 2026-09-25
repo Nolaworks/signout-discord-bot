@@ -2199,7 +2199,7 @@ class AdminPanel(commands.Cog):
     @photo_group.command(name="bypass", description="Disable or re-enable Tool Room photo enforcement")
     @app_commands.describe(
         enabled="Keep photo enforcement enabled; false turns the photo system off",
-        clear_data="When turning it off, resolve debts and delete stored photo data",
+        clear_data="When turning it off, resolve pending debts and delete photos awaiting review",
     )
     @is_admin_check()
     async def photo_bypass(self, interaction: discord.Interaction,
@@ -2218,14 +2218,12 @@ class AdminPanel(commands.Cog):
             cleared_debts = 0
             restored_users = 0
             deleted_photos = 0
-            cleared_history = 0
 
             if clear_data:
                 (
                     cleared_debts,
                     restored_users,
                     deleted_photos,
-                    cleared_history,
                 ) = PhotoSystemRepository(session).purge_photo_data(admin_user_id)
 
             session.commit()
@@ -2237,8 +2235,7 @@ class AdminPanel(commands.Cog):
             if clear_data:
                 response += (
                     f" Cleared {cleared_debts} pending debt(s) for {restored_users} user(s), "
-                    f"deleted {deleted_photos} photo record(s), and cleared photo data from "
-                    f"{cleared_history} history record(s)."
+                    f"deleted {deleted_photos} photo(s) awaiting review. Historical photos were retained."
                 )
 
         await interaction.response.send_message(response, ephemeral=True)
@@ -2696,7 +2693,7 @@ class AdminPanel(commands.Cog):
                 "creates a debt that blocks the user from new signouts.\n\n"
                 "**Debt Management:**\n"
                 "`/admin photo bypass enabled:false` — Disable all photo enforcement\n"
-                "`/admin photo bypass enabled:false clear_data:true` — Disable, clear photos/debts, and restore debt-blocked access\n"
+                "`/admin photo bypass enabled:false clear_data:true` — Disable, clear pending photos/debts, restore access; keep history\n"
                 "`/admin photo bypass enabled:true` — Re-enable photo enforcement\n\n"
                 "`/admin debt clear user:<name>` — Clear a user's photo debts & unblock them\n"
                 "`/admin debt audit` — View all outstanding photo debts\n"

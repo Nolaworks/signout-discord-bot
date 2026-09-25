@@ -233,7 +233,7 @@ Turn photo enforcement off without deleting existing photo records:
 /admin photo bypass enabled:false
 ```
 
-Disable enforcement, resolve all pending photo debts (restoring signout access), delete stored photo records and debt photo URLs, and clear photo URLs from reservation history:
+Disable enforcement, resolve pending photo debts (restoring signout access), and delete only photos still awaiting review. Reviewed photos, resolved debt records, and reservation-history photo URLs are retained:
 ```
 /admin photo bypass enabled:false clear_data:true
 ```
@@ -243,7 +243,7 @@ Re-enable enforcement for new reservations:
 /admin photo bypass enabled:true
 ```
 
-Disabling photo enforcement clears outstanding `photo_required` flags so existing reservations do not continue sending photo reminders.
+Disabling photo enforcement clears outstanding `photo_required` flags so existing reservations do not continue sending photo reminders. The clear option does not delete reviewed photos or reservation history.
 
 ### Understanding Photo Requirements
 

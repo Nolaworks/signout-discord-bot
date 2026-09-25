@@ -181,7 +181,7 @@ Control access to tools with Discord roles.
 ```
 /admin photo bypass enabled:false [clear_data:true]
 ```
-Disable photo enforcement. Add `clear_data:true` to resolve pending debts and restore affected users' signout access, delete stored photo records, and clear photo URLs from history. Use `enabled:true` to re-enable enforcement.
+Disable photo enforcement. Add `clear_data:true` to resolve pending debts and restore affected users' signout access, and delete only photos awaiting review. Reviewed photos, resolved debt records, and historical photo URLs are retained. Use `enabled:true` to re-enable enforcement.
 
 ### Logging & Debugging
 

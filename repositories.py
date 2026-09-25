@@ -53,8 +53,8 @@ class PhotoSystemRepository:
                 synchronize_session=False,
             )
 
-    def purge_photo_data(self, admin_user_id: str) -> tuple[int, int, int, int]:
-        """Resolve active debts and remove stored photo references and records."""
+    def purge_photo_data(self, admin_user_id: str) -> tuple[int, int, int]:
+        """Resolve active debts and delete photos still pending review."""
         from database import PhotoDebtModel
 
         active_debts = self.session.query(PhotoDebtModel).filter(
@@ -68,18 +68,10 @@ class PhotoSystemRepository:
             debt.admin_user_id = admin_user_id
             debt.photo_url = None
 
-        self.session.query(PhotoDebtModel).filter(
-            PhotoDebtModel.photo_url.isnot(None)
-        ).update({PhotoDebtModel.photo_url: None}, synchronize_session=False)
-        deleted_photos = self.session.query(ReservationPhotoModel).delete(
-            synchronize_session=False
-        )
-        cleared_history = self.session.query(ReservationHistoryModel).filter(
-            ReservationHistoryModel.photo_urls.isnot(None)
-        ).update(
-            {ReservationHistoryModel.photo_urls: None}, synchronize_session=False
-        )
-        return len(active_debts), len(restored_users), deleted_photos, cleared_history
+        deleted_pending_photos = self.session.query(ReservationPhotoModel).filter(
+            ReservationPhotoModel.approved.is_(None)
+        ).delete(synchronize_session=False)
+        return len(active_debts), len(restored_users), deleted_pending_photos
 
 
 class UserRepository:
