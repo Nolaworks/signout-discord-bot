@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "DATABASE_URL_REDACTED192.168.30.151:5432/signout_bot",
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL must be set in the environment")
+
 # Reservation timestamps in this bot DB are stored as timezone-naive local times.
 # Use the same timezone here when evaluating now() in SQL comparisons.
 DB_TIMEZONE = os.getenv("DB_TIMEZONE", "America/Chicago")

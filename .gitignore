@@ -1,25 +1,20 @@
-signout-venv
-bot.log
-__pycache__
-.bash_history
-.bash_logout
-.bashrc
-.gitconfig
-.lesshst
-.profile
-.sudo_as_admin_successful
-.wget-hsts
-tools.*
-history.*
-.bot-*
-history.csv.*
+__pycache__/
+*.py[cod]
+.venv/
+signout-venv/
+.bot-venv/
+.bot-env/
 
-
-# Environment file with secrets
+# Local credentials; checked-in examples should use placeholders only.
 .env
 .env.*
 
-# Database backups
+# Runtime output and local database backups.
+*.log
+*.log.*
 backups/
 
-.venv/
+# Local exports and generated data.
+tools.*
+history.*
+history.csv.*
